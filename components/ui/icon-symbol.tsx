@@ -38,6 +38,9 @@ const MAPPING = {
   "rectangle.portrait.and.arrow.right": "logout",
   "arrow.right": "arrow-forward",
   "plus": "add",
+  "square.and.arrow.up": "share",
+  "arrowshape.turn.up.right.fill": "redo",
+  "link": "link",
 } as IconMapping;
 
 /**

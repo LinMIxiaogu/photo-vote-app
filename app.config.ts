@@ -50,9 +50,11 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: env.iosBundleId,
-    "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      }
+    infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
+      // 允许查询小红书 URI Scheme（iOS 9+ 需要白名单）
+      LSApplicationQueriesSchemes: ["xhsdiscover"],
+    },
   },
   android: {
     adaptiveIcon: {
@@ -104,6 +106,14 @@ const config: ExpoConfig = {
         dark: {
           backgroundColor: "#000000",
         },
+      },
+    ],
+    [
+      "expo-media-library",
+      {
+        photosPermission: "Allow 第一印象 to access your photos.",
+        savePhotosPermission: "Allow 第一印象 to save photos to your library.",
+        isAccessMediaLocationEnabled: false,
       },
     ],
     [

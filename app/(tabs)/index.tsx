@@ -6,6 +6,11 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/hooks/use-auth";
 import { trpc } from "@/lib/trpc";
 import { getImageUrl } from "@/lib/utils";
+import { getApiBaseUrl } from "@/constants/oauth";
+import * as MediaLibrary from "expo-media-library";
+import * as Linking from "expo-linking";
+import * as Clipboard from "expo-clipboard";
+import { captureRef } from "react-native-view-shot";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -61,6 +66,13 @@ export default function ImageTestScreen() {
   const [commentText, setCommentText] = useState("");
   const [showComments, setShowComments] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  // 截图时临时隐藏分享按钮，避免按钮出现在截图中
+  const [hideShareBtn, setHideShareBtn] = useState(false);
+  const cardCaptureRef = useRef<View>(null);
+  // 分享底部弹窗
+  const [showShareSheet, setShowShareSheet] = useState(false);
+  const [shareThumbnail, setShareThumbnail] = useState<string | null>(null);
 
   // 全屏图片查看器：点击图片展开，横滑可查看同组其他图
   const [expandedPhotoIndex, setExpandedPhotoIndex] = useState<number | null>(null);
@@ -265,6 +277,63 @@ export default function ImageTestScreen() {
     toggleFavoriteMutation.mutate({ cardId: currentCard.id });
   }, [currentCard, toggleFavoriteMutation, user, router]);
 
+  // 点击分享按钮：截图后展示分享底部弹窗
+  const handleOpenShareSheet = useCallback(async () => {
+    if (!currentCard || isSharing) return;
+    setIsSharing(true);
+    try {
+      setHideShareBtn(true);
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      const uri = await captureRef(cardCaptureRef, { format: "jpg", quality: 0.85, result: "tmpfile" });
+      setHideShareBtn(false);
+      setShareThumbnail(uri);
+      setShowShareSheet(true);
+    } catch (e) {
+      setHideShareBtn(false);
+      console.error("[share] 截图失败:", e);
+      Alert.alert("截图失败", "截图时出现错误，请稍后重试。");
+    } finally {
+      setIsSharing(false);
+    }
+  }, [currentCard, isSharing]);
+
+  const closeShareSheet = useCallback(() => setShowShareSheet(false), []);
+
+  // 分享到小红书：保存截图到相册 → 跳转小红书发布页
+  const shareToXiaohongshu = useCallback(async () => {
+    closeShareSheet();
+    if (!shareThumbnail) return;
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("需要相册权限", "请在设置中允许「一选」访问您的相册。");
+        return;
+      }
+      await MediaLibrary.saveToLibraryAsync(shareThumbnail);
+      const xhsScheme = "xhsdiscover://post/";
+      const canOpen = await Linking.canOpenURL(xhsScheme);
+      if (canOpen) {
+        await Linking.openURL(xhsScheme);
+      } else {
+        Alert.alert("截图已保存", "请打开小红书 App 从相册选择图片发布笔记。");
+      }
+    } catch {
+      Alert.alert("分享失败", "请稍后重试。");
+    }
+  }, [shareThumbnail, closeShareSheet]);
+
+  // 复制分享文字 + 链接到剪贴板
+  const copyShareLink = useCallback(async () => {
+    closeShareSheet();
+    if (!currentCard) return;
+    const base = getApiBaseUrl();
+    const url = `${base}/share/card/${currentCard.id}`;
+    const title = currentCard.title || "有趣的投票";
+    const text = `${title} ${url} \n复制后打开【一选】参与投票！`;
+    await Clipboard.setStringAsync(text);
+    Alert.alert("已复制", "链接已复制到剪贴板");
+  }, [currentCard, closeShareSheet]);
+
   const handleSelectPhoto = useCallback(
     (photoId: number) => {
       if (selectedPhotoId !== null || !currentCard) return;
@@ -452,11 +521,25 @@ export default function ImageTestScreen() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <GestureDetector gesture={swipeGesture}>
-        <Animated.View style={[styles.fullScreen, animatedCardStyle]}>
+        <Animated.View ref={cardCaptureRef} style={[styles.fullScreen, animatedCardStyle]}>
           <View style={styles.background} />
 
           <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-            <View style={styles.headerSpacer} />
+            <View style={{ flex: 1 }} />
+            {!!currentCard && !hideShareBtn && Platform.OS !== "web" && (
+              <Pressable
+                onPress={handleOpenShareSheet}
+                disabled={isSharing}
+                style={styles.shareBtn}
+                hitSlop={8}
+              >
+                {isSharing ? (
+                  <ActivityIndicator size="small" color="rgba(255,255,255,0.85)" />
+                ) : (
+                  <IconSymbol name="arrowshape.turn.up.right.fill" size={17} color="rgba(255,255,255,0.85)" />
+                )}
+              </Pressable>
+            )}
           </View>
 
           {showLoading ? (
@@ -796,6 +879,45 @@ export default function ImageTestScreen() {
           </Modal>
         </Animated.View>
       </GestureDetector>
+
+      {/* 分享底部弹窗（位于 GestureDetector 外，不受手势干扰） */}
+      <Modal
+        visible={showShareSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={closeShareSheet}
+      >
+        <Pressable style={styles.shareSheetOverlay} onPress={closeShareSheet}>
+          <Pressable style={[styles.shareSheetContainer, { paddingBottom: insets.bottom + 20 }]} onPress={() => {}}>
+            {/* 拖拽把手 */}
+            <View style={styles.shareSheetHandleWrap}>
+              <View style={styles.shareSheetHandle} />
+            </View>
+
+            <Text style={styles.shareSheetSectionTitle}>分享至</Text>
+
+            {/* 两个分享选项：小红书 + 复制链接 */}
+            <View style={styles.shareOptionsRow}>
+              {/* 小红书 */}
+              <Pressable style={styles.shareOption} onPress={shareToXiaohongshu}>
+                <View style={[styles.shareOptionIcon, { backgroundColor: "#FF2442" }]}>
+                  <Text style={styles.shareOptionIconText}>书</Text>
+                </View>
+                <Text style={styles.shareOptionLabel}>小红书</Text>
+              </Pressable>
+
+              {/* 复制链接 */}
+              <Pressable style={styles.shareOption} onPress={copyShareLink}>
+                <View style={[styles.shareOptionIcon, { backgroundColor: "#4B5563" }]}>
+                  <IconSymbol name="link" size={24} color="#ffffff" />
+                </View>
+                <Text style={styles.shareOptionLabel}>复制链接</Text>
+              </Pressable>
+            </View>
+
+          </Pressable>
+        </Pressable>
+      </Modal>
     </GestureHandlerRootView>
   );
 }
@@ -825,9 +947,13 @@ const styles = StyleSheet.create({
     zIndex: 10,
     gap: 12,
   },
-  headerSpacer: {
-    width: 44,
-    height: 44,
+  shareBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   content: {
     flex: 1,
@@ -1244,5 +1370,64 @@ const styles = StyleSheet.create({
   imageViewerImage: {
     width: SCREEN_WIDTH,
     height: "100%",
+  },
+  // ── 分享底部弹窗 ──
+  shareSheetOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  shareSheetContainer: {
+    backgroundColor: "#16213e",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+  },
+  shareSheetHandleWrap: {
+    alignItems: "center",
+    paddingVertical: 12,
+  },
+  shareSheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  shareSheetSectionTitle: {
+    color: "rgba(255,255,255,0.5)",
+    fontSize: 13,
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  shareOptionsRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 48,
+    marginBottom: 28,
+  },
+  shareOption: {
+    alignItems: "center",
+    gap: 8,
+    width: 68,
+  },
+  shareOptionIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  shareOptionIconText: {
+    color: "#ffffff",
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  shareOptionIconTextSm: {
+    fontSize: 16,
+  },
+  shareOptionLabel: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 12,
+    textAlign: "center",
   },
 });
