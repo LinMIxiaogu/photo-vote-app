@@ -8,12 +8,18 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import * as Api from "@/lib/_core/api";
 import * as Auth from "@/lib/_core/auth";
+
+const USER_AGREEMENT_URL =
+  "https://hf7l9aiqzx.feishu.cn/docx/K1bldgZ6dojTcsxpU6Rc4NvCnBh?from=from_copylink";
+const PRIVACY_POLICY_URL =
+  "https://hf7l9aiqzx.feishu.cn/docx/KkdMdIKSCo7LZmxg2ZjcfhfGnEg?from=from_copylink";
 
 /** 中国大陆手机号：1 开头，第二位 3-9，共 11 位 */
 const PHONE_REGEX = /^1[3-9]\d{9}$/;
@@ -32,6 +38,7 @@ export default function LoginScreen() {
   const [sendCodeLoading, setSendCodeLoading] = useState(false);
   const [error, setError] = useState("");
   const [codeCooldown, setCodeCooldown] = useState(0);
+  const [agreed, setAgreed] = useState(false);
 
   const handleSendCode = useCallback(async () => {
     const raw = phone.trim();
@@ -77,6 +84,10 @@ export default function LoginScreen() {
     const codeStr = code.trim();
     if (codeStr.length !== 6 || !/^\d{6}$/.test(codeStr)) {
       setError("请输入 6 位验证码");
+      return;
+    }
+    if (!agreed) {
+      setError("请先阅读并同意用户协议和隐私政策");
       return;
     }
     setError("");
@@ -160,13 +171,41 @@ export default function LoginScreen() {
             </Pressable>
           </View>
           {error ? <Text style={styles.error}>{error}</Text> : null}
-          <Pressable onPress={handleSubmit} disabled={loading}>
+
+          <Pressable
+            style={styles.agreementRow}
+            onPress={() => { setAgreed((v) => !v); setError(""); }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: agreed }}
+          >
+            <View style={[styles.checkbox, agreed && styles.checkboxChecked]}>
+              {agreed && <Text style={styles.checkmark}>✓</Text>}
+            </View>
+            <Text style={styles.agreementText}>
+              我已阅读并同意{" "}
+              <Text
+                style={styles.agreementLink}
+                onPress={(e) => { e.stopPropagation?.(); Linking.openURL(USER_AGREEMENT_URL); }}
+              >
+                用户协议
+              </Text>
+              {" "}和{" "}
+              <Text
+                style={styles.agreementLink}
+                onPress={(e) => { e.stopPropagation?.(); Linking.openURL(PRIVACY_POLICY_URL); }}
+              >
+                隐私政策
+              </Text>
+            </Text>
+          </Pressable>
+
+          <Pressable onPress={handleSubmit} disabled={loading || !agreed}>
             {({ pressed }) => (
               <View
                 style={[
                   styles.submit,
                   pressed && styles.submitPressed,
-                  loading && styles.submitDisabled,
+                  (loading || !agreed) && styles.submitDisabled,
                 ]}
               >
                 {loading ? (
@@ -271,5 +310,41 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#ffffff",
+  },
+  agreementRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: -4,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: "#D1D5DB",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  checkboxChecked: {
+    backgroundColor: "#6366F1",
+    borderColor: "#6366F1",
+  },
+  checkmark: {
+    fontSize: 13,
+    color: "#ffffff",
+    fontWeight: "700",
+    lineHeight: 16,
+  },
+  agreementText: {
+    fontSize: 13,
+    color: "#687076",
+    flex: 1,
+    lineHeight: 20,
+  },
+  agreementLink: {
+    color: "#6366F1",
+    fontWeight: "600",
   },
 });
