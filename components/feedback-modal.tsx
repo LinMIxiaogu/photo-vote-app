@@ -91,8 +91,7 @@ export function FeedbackModal({ visible, onClose }: Props) {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
-      allowsEditing: true,
-      aspect: [16, 10],
+      allowsEditing: false,
       quality: 0.7,
       base64: true,
     });

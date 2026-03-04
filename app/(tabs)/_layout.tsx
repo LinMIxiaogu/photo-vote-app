@@ -3,15 +3,28 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { HapticTab } from "@/components/haptic-tab";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { Platform, Pressable, View, StyleSheet } from "react-native";
+import { Platform, Pressable, View, StyleSheet, Alert } from "react-native";
 import * as Haptics from "expo-haptics";
+import { useAuth } from "@/hooks/use-auth";
 
 function UploadTabButton() {
   const router = useRouter();
+  const { user } = useAuth();
 
   const handlePress = () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    if (!user) {
+      if (Platform.OS === "web") {
+        window.alert("请先登录后再创建作品");
+      } else {
+        Alert.alert("请先登录", "创建作品需要先登录账号", [
+          { text: "去登录", onPress: () => router.push("/login") },
+          { text: "取消", style: "cancel" },
+        ]);
+      }
+      return;
     }
     router.push("/create");
   };
