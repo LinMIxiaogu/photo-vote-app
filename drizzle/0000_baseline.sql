@@ -54,6 +54,7 @@ CREATE TABLE `comments` (
 	`cardId` int NOT NULL,
 	`parentId` int,
 	`userId` int,
+	`replyToUserId` int,
 	`content` text NOT NULL,
 	`images` json,
 	`createdAt` timestamp NOT NULL DEFAULT (now()),

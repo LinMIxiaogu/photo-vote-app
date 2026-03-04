@@ -249,6 +249,12 @@ export const appRouter = router({
         return db.hasVotedOnCard(ctx.user.id, input.cardId);
       }),
 
+    // Check if current user has ever cast any vote (used for new-user guide)
+    hasAnyVote: protectedProcedure
+      .query(async ({ ctx }) => {
+        return db.hasAnyVote(ctx.user.id);
+      }),
+
     // Get current user's vote result on a card
     myVoteResult: protectedProcedure
       .input(z.object({ cardId: z.number() }))
@@ -328,17 +334,7 @@ export const appRouter = router({
             return { ...comment, votedPhotoId: vote?.photoId ?? null };
           })
         );
-        // Build parentUserName from parent's userId
-        let parentUserName = "用户";
-        if (parent.userId != null) {
-          const parentUser = await db.getUserById(parent.userId);
-          if (parentUser?.name?.trim()) parentUserName = parentUser.name.trim();
-          else if (parentUser?.phone) {
-            const p = parentUser.phone;
-            parentUserName = p.length >= 11 ? `${p.slice(0, 3)}****${p.slice(7)}` : p;
-          }
-        }
-        return { replies: repliesWithVotes, parentUserName };
+        return { replies: repliesWithVotes, parentUserName: null };
       }),
 
     // 发表评论：已投票或已收藏方可发表（images 为已上传的 URL 数组，由客户端先调用 /api/upload 获得）
@@ -347,6 +343,7 @@ export const appRouter = router({
         cardId: z.number(),
         content: z.string().min(0).max(500),
         parentId: z.number().optional(),
+        replyToUserId: z.number().optional(),
         imageUrls: z.array(z.string().url()).max(2).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
@@ -369,6 +366,7 @@ export const appRouter = router({
           userId: ctx.user.id,
           content: input.content.trim(),
           parentId: input.parentId ?? undefined,
+          replyToUserId: input.replyToUserId ?? undefined,
           ...(input.imageUrls?.length ? { images: input.imageUrls } : {}),
         });
         return { commentId };

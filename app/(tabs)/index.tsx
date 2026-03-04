@@ -22,6 +22,11 @@ import Animated, {
 } from "react-native-reanimated";
 import { Gesture, GestureDetector, GestureHandlerRootView, ScrollView as GHScrollView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { DoubleTapGuide } from "@/components/DoubleTapGuide";
+import { SwipeGuide } from "@/components/SwipeGuide";
+
+const shareIcon = require("@/assets/images/share-icon.png");
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const SWIPE_THRESHOLD = SCREEN_HEIGHT * 0.08;
@@ -49,7 +54,7 @@ interface VoteCardData {
 export default function ImageTestScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   const [currentCard, setCurrentCard] = useState<VoteCardData | null>(null);
   const [cardQueue, setCardQueue] = useState<VoteCardData[]>([]);
@@ -111,6 +116,91 @@ export default function ImageTestScreen() {
   }, [toastOpacity, toastTranslateY]);
 
   const utils = trpc.useUtils();
+
+  // ── 新手引导：先上滑翻页，再在第 2 张引导双击投票 ─────────────────────────
+  const SWIPE_GUIDE_SHOWN_KEY = "@swipe_guide_shown_v1";
+  const GUIDE_SHOWN_KEY = "@double_tap_guide_shown_v2";
+  const [showSwipeGuide, setShowSwipeGuide] = useState(false);
+  const [showDoubleTapGuide, setShowDoubleTapGuide] = useState(false);
+  const swipeGuideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 图片区域在屏幕上的位置，用于在 2/3/4 图不同布局下把圆环指引对准图片 */
+  const [photoLayout, setPhotoLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const lastPhotoRef = useRef<View>(null);
+  const guideCheckedRef = useRef(false);
+  const prevUserIdRef = useRef<number | null | undefined>(undefined);
+
+  // 引导显示时测量当前卡片图片区域的位置（2/3/4 图布局不同，需实测）
+  useEffect(() => {
+    if (!showDoubleTapGuide || !currentCard || showResult) {
+      if (!showDoubleTapGuide) setPhotoLayout(null);
+      return;
+    }
+    const id = requestAnimationFrame(() => {
+      lastPhotoRef.current?.measureInWindow((x, y, width, height) => {
+        setPhotoLayout({ x, y, width, height });
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [showDoubleTapGuide, currentCard?.id, showResult]);
+
+  // 登录/退出登录时重置检查标记，使新 auth 状态下重新判断是否展示
+  useEffect(() => {
+    if (authLoading) return;
+    const uid = user?.id ?? null;
+    if (prevUserIdRef.current !== undefined && prevUserIdRef.current !== uid) {
+      guideCheckedRef.current = false;
+    }
+    prevUserIdRef.current = uid;
+  }, [user, authLoading]);
+
+  // 首屏「上滑翻页」指引：首次进入投票页 0.5~1 秒后显示，用户完成一次上滑后关闭
+  useEffect(() => {
+    if (!currentCard || showResult) return;
+    if (swipeGuideTimerRef.current) clearTimeout(swipeGuideTimerRef.current);
+    const delay = 500 + Math.random() * 500;
+    swipeGuideTimerRef.current = setTimeout(() => {
+      swipeGuideTimerRef.current = null;
+      AsyncStorage.getItem(SWIPE_GUIDE_SHOWN_KEY).then((v) => {
+        if (!v) setShowSwipeGuide(true);
+      }).catch(() => {});
+    }, delay);
+    return () => {
+      if (swipeGuideTimerRef.current) clearTimeout(swipeGuideTimerRef.current);
+    };
+  }, [currentCard?.id, showResult]);
+
+  // 第 2 张才展示「双击投票」：用户已理解连续浏览后，再教参与动作
+  // 触发条件：previousCards.length >= 1（已上滑过一次）、且本设备从未展示过、且（未登录或从未投过票）
+  useEffect(() => {
+    if (guideCheckedRef.current || !currentCard || showResult || authLoading) return;
+    if (previousCards.length < 1) return;
+    guideCheckedRef.current = true;
+
+    (async () => {
+      try {
+        if (await AsyncStorage.getItem(GUIDE_SHOWN_KEY)) return;
+        if (!user) {
+          setShowDoubleTapGuide(true);
+        } else {
+          const hasVotes = await utils.votes.hasAnyVote.fetch();
+          if (!hasVotes) setShowDoubleTapGuide(true);
+        }
+      } catch {
+        // 指引是非关键功能，静默忽略
+      }
+    })();
+  }, [currentCard, showResult, user, authLoading, previousCards.length, utils.votes.hasAnyVote]);
+
+  const handleGuideDismiss = useCallback(() => {
+    setShowDoubleTapGuide(false);
+    setPhotoLayout(null);
+    AsyncStorage.setItem(GUIDE_SHOWN_KEY, "1").catch(() => {});
+  }, []);
+  const handleSwipeGuideDismiss = useCallback(() => {
+    setShowSwipeGuide(false);
+    AsyncStorage.setItem(SWIPE_GUIDE_SHOWN_KEY, "1").catch(() => {});
+  }, []);
+  // ────────────────────────────────────────────────────────────────────────
 
   const fetchBatch = useCallback(
     async (excludeCardIds: number[]): Promise<VoteCardData[]> => {
@@ -539,11 +629,14 @@ export default function ImageTestScreen() {
   }, [currentCard, translateY, cardOpacity]);
 
   const goToNextCard = useCallback(() => {
+    if (showSwipeGuide) {
+      handleSwipeGuideDismiss();
+    }
     setIsTransitioning(true);
     cardOpacity.value = withTiming(0, { duration: 150 }, () => {
       runOnJS(resetAndFetchNext)();
     });
-  }, [resetAndFetchNext, cardOpacity]);
+  }, [resetAndFetchNext, cardOpacity, showSwipeGuide, handleSwipeGuideDismiss]);
 
   const goToPreviousCard = useCallback(() => {
     if (previousCards.length === 0 || isTransitioning) return;
@@ -622,7 +715,7 @@ export default function ImageTestScreen() {
                 {isSharing ? (
                   <ActivityIndicator size="small" color="rgba(255,255,255,0.85)" />
                 ) : (
-                  <IconSymbol name="arrowshape.turn.up.right.fill" size={17} color="rgba(255,255,255,0.85)" />
+                  <RNImage source={shareIcon} style={styles.shareBtnIcon} resizeMode="contain" />
                 )}
               </Pressable>
             )}
@@ -659,29 +752,37 @@ export default function ImageTestScreen() {
                   <Text style={styles.voteSubtitle}>双击进行投票</Text>
                   {(() => {
                     const count = currentCard!.photos.length;
-                    const renderCard = (photo: VoteCardData["photos"][number], style: any, photoIndex: number) => (
-                      <Pressable
-                        key={photo.id}
-                        onPress={() => handlePhotoPress(photo.id, photoIndex)}
-                        disabled={selectedPhotoId !== null}
-                        style={[styles.photoCard, style]}
-                      >
-                        <View style={styles.photoImageWrap}>
-                          <RNImage
-                            source={{ uri: getImageUrl(photo.url) }}
-                            style={styles.photoImage}
-                            resizeMode="cover"
-                            onError={(e) => {
-                              console.warn("[vote-flow] image load failed", {
-                                photoId: photo.id,
-                                url: getImageUrl(photo.url),
-                                error: e?.nativeEvent?.error,
-                              });
-                            }}
-                          />
+                    const renderCard = (photo: VoteCardData["photos"][number], style: any, photoIndex: number) => {
+                      const isLast = photoIndex === count - 1;
+                      return (
+                        <View
+                          key={photo.id}
+                          ref={isLast ? lastPhotoRef : undefined}
+                          style={[styles.photoCard, style]}
+                        >
+                          <Pressable
+                            onPress={() => handlePhotoPress(photo.id, photoIndex)}
+                            disabled={selectedPhotoId !== null}
+                            style={styles.photoCardPressable}
+                          >
+                            <View style={styles.photoImageWrap}>
+                              <RNImage
+                                source={{ uri: getImageUrl(photo.url) }}
+                                style={styles.photoImage}
+                                resizeMode="cover"
+                                onError={(e) => {
+                                  console.warn("[vote-flow] image load failed", {
+                                    photoId: photo.id,
+                                    url: getImageUrl(photo.url),
+                                    error: e?.nativeEvent?.error,
+                                  });
+                                }}
+                              />
+                            </View>
+                          </Pressable>
                         </View>
-                      </Pressable>
-                    );
+                      );
+                    };
 
                     if (count === 4) {
                       const rows = [
@@ -1057,6 +1158,20 @@ export default function ImageTestScreen() {
           <Text style={styles.toastText}>{toastMessage}</Text>
         </View>
       </Animated.View>
+
+      {/* 新手引导 1：上滑翻页（首屏 0.5~1s 后显示，完成一次上滑后关闭） */}
+      {showSwipeGuide && (
+        <SwipeGuide
+          hintText="上滑查看下一张投票卡"
+          directionUp
+          onDismiss={handleSwipeGuideDismiss}
+        />
+      )}
+
+      {/* 新手引导 2：双击投票（在第 2 张且已上滑过一次后显示） */}
+      {showDoubleTapGuide && (
+        <DoubleTapGuide onDismiss={handleGuideDismiss} photoLayout={photoLayout} />
+      )}
     </GestureHandlerRootView>
   );
 }
@@ -1093,6 +1208,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.12)",
     justifyContent: "center",
     alignItems: "center",
+  },
+  shareBtnIcon: {
+    width: 18,
+    height: 18,
+    tintColor: "rgba(255,255,255,0.85)",
   },
   content: {
     flex: 1,
@@ -1543,6 +1663,9 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
     aspectRatio: 1,
     overflow: "hidden",
+  },
+  photoCardPressable: {
+    flex: 1,
   },
   photoCardGrid: {
     width: "49%",

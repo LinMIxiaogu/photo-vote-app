@@ -30,12 +30,16 @@ export const API_BASE_URL = env.apiBaseUrl;
  * URL pattern: https://PORT-sandboxid.region.domain
  */
 export function getApiBaseUrl(): string {
-  // 网页端在 localhost 时，固定用本地后端，避免 .env 里手机调试 IP 导致 "Failed to fetch"
-  // 优先使用 API_BASE_URL 中配置的端口，若未配置则回退到 3000
+  // 网页端在 localhost 时，若 API_BASE_URL 指向远程域名则直接使用，
+  // 否则固定用本地后端，避免 .env 里手机调试 IP 导致 "Failed to fetch"
   if (ReactNative.Platform.OS === "web" && typeof window !== "undefined" && window.location?.hostname === "localhost") {
     if (API_BASE_URL) {
       try {
         const url = new URL(API_BASE_URL);
+        // 若配置的是远程域名（非 localhost/IP），直接使用远程地址
+        if (url.hostname !== "localhost" && !/^\d+\.\d+\.\d+\.\d+$/.test(url.hostname)) {
+          return API_BASE_URL.replace(/\/$/, "");
+        }
         return `http://localhost:${url.port || "3000"}`;
       } catch {
         // ignore parse error, fall through

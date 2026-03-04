@@ -11,8 +11,17 @@ import { getImageUrl } from "@/lib/utils";
 
 const SKIP_VOTE_REDIRECT_KEY = "@skip_vote_redirect";
 
-type CommentWithVote = { id: number; userId?: number | null; userName: string; content: string; createdAt: Date; votedPhotoId: number | null; replyCount?: number };
-type ReplyBlock = { replies: CommentWithVote[]; parentUserName: string };
+type CommentWithVote = {
+  id: number;
+  userId?: number | null;
+  userName: string;
+  content: string;
+  createdAt: Date;
+  votedPhotoId: number | null;
+  replyCount?: number;
+  replyToUserName?: string | null;
+};
+type ReplyBlock = { replies: CommentWithVote[] };
 
 export default function ResultScreen() {
   const router = useRouter();
@@ -22,7 +31,8 @@ export default function ResultScreen() {
   const { user } = useAuth();
 
   const [commentText, setCommentText] = useState("");
-  const [replyingTo, setReplyingTo] = useState<{ commentId: number; userName: string } | null>(null);
+  // parentCommentId = 顶级主评论 id（parentId 字段）；replyToUserId = 楼中楼内被 @ 的用户
+  const [replyingTo, setReplyingTo] = useState<{ parentCommentId: number; userName: string; replyToUserId?: number | null } | null>(null);
   const [expandedReplies, setExpandedReplies] = useState<Record<number, ReplyBlock>>({});
   const [loadingReplies, setLoadingReplies] = useState<Record<number, boolean>>({});
 
@@ -55,6 +65,7 @@ export default function ResultScreen() {
       setCommentText("");
       setReplyingTo(null);
       refetchComments();
+      // 发布回复后折叠该主评论的回复区，等用户再次展开时刷新
       if (vars.parentId != null) {
         setExpandedReplies((prev) => {
           const next = { ...prev };
@@ -84,7 +95,8 @@ export default function ResultScreen() {
     createCommentMutation.mutate({
       cardId,
       content: commentText.trim(),
-      parentId: replyingTo?.commentId,
+      parentId: replyingTo?.parentCommentId,
+      replyToUserId: replyingTo?.replyToUserId ?? undefined,
     });
   };
 
@@ -93,16 +105,17 @@ export default function ResultScreen() {
     setLoadingReplies((p) => ({ ...p, [parentId]: true }));
     try {
       const res = await utils.comments.getReplies.fetch({ parentId, cardId });
-      if (res.replies.length > 0 || res.parentUserName) {
-        setExpandedReplies((prev) => ({ ...prev, [parentId]: { replies: res.replies as CommentWithVote[], parentUserName: res.parentUserName ?? "" } }));
+      if (res.replies.length > 0) {
+        setExpandedReplies((prev) => ({ ...prev, [parentId]: { replies: res.replies as CommentWithVote[] } }));
       }
     } finally {
       setLoadingReplies((p) => ({ ...p, [parentId]: false }));
     }
   }, [cardId, utils.comments.getReplies, loadingReplies, expandedReplies]);
 
-  const handleReplyClick = useCallback((commentId: number, userName: string) => {
-    setReplyingTo({ commentId, userName });
+  // rootCommentId: 顶级主评论 id（回复楼中楼内任何一条时，parentId 统一指向顶级主评论）
+  const handleReplyClick = useCallback((rootCommentId: number, userName: string, replyToUserId?: number | null) => {
+    setReplyingTo({ parentCommentId: rootCommentId, userName, replyToUserId });
   }, []);
 
   const handleToggleFavorite = () => {
@@ -219,7 +232,7 @@ export default function ResultScreen() {
               {/* 评论输入：回复时显示前缀 */}
               {replyingTo && (
                 <View style={styles.replyPrefixRow}>
-                  <Text style={styles.replyPrefixText}>回复 @{replyingTo.userName}:</Text>
+                  <Text style={styles.replyPrefixText}>回复 <Text style={styles.replyPrefixName}>@{replyingTo.userName}</Text></Text>
                   <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>
                     <IconSymbol name="xmark" size={16} color="#9CA3AF" />
                   </Pressable>
@@ -310,7 +323,7 @@ export default function ResultScreen() {
                                   minute: "2-digit",
                                 })}
                               </Text>
-                              <Pressable onPress={() => handleReplyClick(comment.id, comment.userName)} style={styles.replyBtn}>
+                              <Pressable onPress={() => handleReplyClick(comment.id, comment.userName, comment.userId)} style={styles.replyBtn}>
                                 <Text style={styles.replyBtnText}>回复</Text>
                               </Pressable>
                             </View>
@@ -320,32 +333,46 @@ export default function ResultScreen() {
                           <View style={styles.repliesToggleRow}>
                             {expanded ? (
                               <>
-                                {expanded.replies.map((reply) => {
-                                  const rPhoto = card.photos.find((p) => p.id === reply.votedPhotoId);
-                                  const rIdx = rPhoto ? card.photos.findIndex((p) => p.id === reply.votedPhotoId) : -1;
-                                  const rReplyCount = reply.replyCount ?? 0;
-                                  const rExpanded = expandedReplies[reply.id];
-                                  const rLoading = loadingReplies[reply.id];
-                                  return (
-                                    <View key={reply.id} style={styles.replyBlock}>
-                                      <View style={[styles.commentItem, styles.replyItem]}>
-                                        <View style={styles.commentBody}>
+                                {/* 楼中楼：2 层平铺，所有回复 parentId 均指向本主评论 */}
+                                <View style={styles.repliesContainer}>
+                                  {expanded.replies.map((reply, rIndex) => {
+                                    const rPhoto = card.photos.find((p) => p.id === reply.votedPhotoId);
+                                    const rIdx = rPhoto ? card.photos.findIndex((p) => p.id === reply.votedPhotoId) : -1;
+                                    const isLast = rIndex === expanded.replies.length - 1;
+                                    return (
+                                      <View key={reply.id} style={[styles.replyRow, !isLast && styles.replyRowDivider]}>
+                                        {/* 头像 */}
+                                        <View style={styles.replyAvatarWrap}>
+                                          {rPhoto ? (
+                                            <Image source={{ uri: getImageUrl(rPhoto.url) }} style={styles.replyAvatarPhoto} contentFit="cover" />
+                                          ) : (
+                                            <View style={styles.replyAvatar}>
+                                              <Text style={styles.replyAvatarText}>{reply.userName.slice(-2)}</Text>
+                                            </View>
+                                          )}
+                                          {rPhoto && rIdx >= 0 && (
+                                            <View style={styles.photoNumBadge}>
+                                              <Text style={styles.photoNumText}>{rIdx + 1}</Text>
+                                            </View>
+                                          )}
+                                        </View>
+                                        {/* 内容 */}
+                                        <View style={styles.replyBody}>
                                           <View style={styles.commentRow}>
-                                            <Text style={styles.commentUser}>{reply.userName}</Text>
+                                            <Text style={styles.replyUserName}>{reply.userName}</Text>
                                             {reply.userId != null && reply.userId === card?.userId && (
                                               <View style={styles.authorBadge}>
                                                 <Text style={styles.authorBadgeText}>作者</Text>
                                               </View>
                                             )}
-                                            {rPhoto && rIdx >= 0 && (
-                                              <View style={styles.voteBadge}>
-                                                <IconSymbol name="checkmark.circle.fill" size={12} color="#6366F1" />
-                                                <Text style={styles.voteBadgeText}>第 {rIdx + 1} 张</Text>
-                                              </View>
-                                            )}
                                           </View>
                                           <Text style={styles.commentContent}>
-                                            回复 @{expanded.parentUserName}: {reply.content}
+                                            {reply.replyToUserName ? (
+                                              <>
+                                                <Text style={styles.replyAtName}>回复 @{reply.replyToUserName}  </Text>
+                                                {reply.content}
+                                              </>
+                                            ) : reply.content}
                                           </Text>
                                           <View style={styles.commentFooter}>
                                             <Text style={styles.commentTime}>
@@ -356,63 +383,16 @@ export default function ResultScreen() {
                                                 minute: "2-digit",
                                               })}
                                             </Text>
-                                            <Pressable onPress={() => handleReplyClick(reply.id, reply.userName)} style={styles.replyBtn}>
+                                            {/* 回复楼中楼时 parentId 仍指向顶级主评论，replyToUserId 指向被 @ 的人 */}
+                                            <Pressable onPress={() => handleReplyClick(comment.id, reply.userName, reply.userId)} style={styles.replyBtn}>
                                               <Text style={styles.replyBtnText}>回复</Text>
                                             </Pressable>
                                           </View>
                                         </View>
                                       </View>
-                                      {rReplyCount > 0 && (
-                                        <View style={styles.repliesToggleRow}>
-                                          {rExpanded ? (
-                                            <>
-                                              {rExpanded.replies.map((sub) => (
-                                                <View key={sub.id} style={[styles.commentItem, styles.replyItem, styles.replyItemL2]}>
-                                                  <View style={styles.commentBody}>
-                                                    <Text style={styles.commentContent}>
-                                                      回复 @{rExpanded.parentUserName}: {sub.content}
-                                                    </Text>
-                                                    <View style={styles.commentFooter}>
-                                                      <Text style={styles.commentTime}>
-                                                        {new Date(sub.createdAt).toLocaleString("zh-CN", {
-                                                          month: "2-digit",
-                                                          day: "2-digit",
-                                                          hour: "2-digit",
-                                                          minute: "2-digit",
-                                                        })}
-                                                      </Text>
-                                                      <Pressable onPress={() => handleReplyClick(sub.id, sub.userName)} style={styles.replyBtn}>
-                                                        <Text style={styles.replyBtnText}>回复</Text>
-                                                      </Pressable>
-                                                    </View>
-                                                  </View>
-                                                </View>
-                                              ))}
-                                              <Pressable
-                                                onPress={() => setExpandedReplies((p) => { const next = { ...p }; delete next[reply.id]; return next; })}
-                                                style={styles.repliesToggleBtn}
-                                              >
-                                                <Text style={styles.repliesToggleText}>收起回复</Text>
-                                              </Pressable>
-                                            </>
-                                          ) : (
-                                            <Pressable
-                                              onPress={() => !rLoading && handleExpandReplies(reply.id)}
-                                              style={styles.repliesToggleBtn}
-                                              disabled={rLoading}
-                                            >
-                                              {rLoading ? (
-                                                <ActivityIndicator size="small" color="#6366F1" />
-                                              ) : (
-                                                <Text style={styles.repliesToggleText}>共 {rReplyCount} 条回复</Text>
-                                              )}
-                                            </Pressable>
-                                          )}
-                                        </View>
-                                      )}
-                                    </View>
-                                  );
-                                })}
+                                    );
+                                  })}
+                                </View>
                                 <Pressable
                                   onPress={() => setExpandedReplies((p) => { const next = { ...p }; delete next[comment.id]; return next; })}
                                   style={styles.repliesToggleBtn}
@@ -429,7 +409,7 @@ export default function ResultScreen() {
                                 {loading ? (
                                   <ActivityIndicator size="small" color="#6366F1" />
                                 ) : (
-                                  <Text style={styles.repliesToggleText}>共 {replyCount} 条回复</Text>
+                                  <Text style={styles.repliesToggleText}>共 {replyCount} 条回复 &gt;</Text>
                                 )}
                               </Pressable>
                             )}
@@ -714,7 +694,11 @@ const styles = StyleSheet.create({
   },
   replyPrefixText: {
     fontSize: 13,
+    color: "#6B7280",
+  },
+  replyPrefixName: {
     color: "#6366F1",
+    fontWeight: "600",
   },
   commentsList: {
     gap: 12,
@@ -841,21 +825,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#6366F1",
   },
-  replyItem: {
-    marginLeft: 24,
-    backgroundColor: "#F3F4F6",
-  },
-  replyItemL2: {
-    marginLeft: 36,
-    backgroundColor: "#E5E7EB",
-  },
-  replyBlock: {
-    gap: 4,
-  },
   repliesToggleRow: {
-    marginTop: 4,
-    marginLeft: 12,
-    gap: 4,
+    marginTop: 2,
+    marginLeft: 52,
   },
   repliesToggleBtn: {
     paddingVertical: 6,
@@ -864,5 +836,55 @@ const styles = StyleSheet.create({
   repliesToggleText: {
     fontSize: 13,
     color: "#6366F1",
+  },
+  repliesContainer: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 10,
+    overflow: "hidden",
+    marginBottom: 4,
+  },
+  replyRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  replyRowDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E5E7EB",
+  },
+  replyAvatarWrap: {
+    position: "relative",
+    flexShrink: 0,
+  },
+  replyAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#E5E7EB",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  replyAvatarText: {
+    fontSize: 11,
+    color: "#687076",
+    fontWeight: "600",
+  },
+  replyAvatarPhoto: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  replyBody: {
+    flex: 1,
+  },
+  replyUserName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  replyAtName: {
+    color: "#6366F1",
+    fontWeight: "500",
   },
 });

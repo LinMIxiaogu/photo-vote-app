@@ -99,10 +99,12 @@ export const comments = mysqlTable("comments", {
   id: int("id").autoincrement().primaryKey(),
   /** Reference to the card being commented on */
   cardId: int("cardId").notNull(),
-  /** Parent comment id; null = 主评论，非 null = 回复该条 */
+  /** Parent comment id; null = 主评论，非 null = 楼中楼回复（始终指向顶级主评论 id） */
   parentId: int("parentId"),
   /** User ID of the commenter (primary ownership identifier) */
   userId: int("userId"),
+  /** 楼中楼内被 @ 的用户 id；null 表示直接回复主评论，无特定 @ 对象 */
+  replyToUserId: int("replyToUserId"),
   /** Comment content */
   content: text("content").notNull(),
   /** Optional image URLs attached to this comment (max 2), stored as JSON array */

@@ -47,9 +47,11 @@ export default function OAuthCallback() {
               const userInfo: Auth.User = {
                 id: userData.id,
                 openId: userData.openId,
-                name: userData.name,
-                email: userData.email,
-                loginMethod: userData.loginMethod,
+                name: userData.name ?? null,
+                email: userData.email ?? null,
+                phone: userData.phone ?? null,
+                avatarUrl: userData.avatarUrl ?? null,
+                loginMethod: userData.loginMethod ?? null,
                 lastSignedIn: new Date(userData.lastSignedIn || Date.now()),
               };
               await Auth.setUserInfo(userInfo);
@@ -198,9 +200,11 @@ export default function OAuthCallback() {
             const userInfo: Auth.User = {
               id: result.user.id,
               openId: result.user.openId,
-              name: result.user.name,
-              email: result.user.email,
-              loginMethod: result.user.loginMethod,
+              name: result.user.name ?? null,
+              email: result.user.email ?? null,
+              phone: (result.user as any).phone ?? null,
+              avatarUrl: (result.user as any).avatarUrl ?? null,
+              loginMethod: result.user.loginMethod ?? null,
               lastSignedIn: new Date(result.user.lastSignedIn || Date.now()),
             };
             await Auth.setUserInfo(userInfo);

@@ -279,6 +279,18 @@ export async function hasVotedOnCard(userId: number, cardId: number): Promise<bo
   return result.length > 0;
 }
 
+/** Returns true if the user has cast at least one vote ever. */
+export async function hasAnyVote(userId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+
+  const result = await db.select({ id: votes.id }).from(votes)
+    .where(eq(votes.userId, userId))
+    .limit(1);
+
+  return result.length > 0;
+}
+
 export async function getRandomAvailableCard(userId?: number): Promise<Card | undefined> {
   const db = await getDb();
   if (!db) return undefined;
@@ -398,8 +410,8 @@ export async function getTopLevelCommentsByCardId(cardId: number): Promise<(Comm
   }));
 }
 
-/** 某条评论下的直接回复（楼中楼），按时间正序 */
-export async function getRepliesByParentId(parentId: number): Promise<(Comment & { replyCount: number; userName: string; userAvatarUrl: string | null })[]> {
+/** 某条评论下的直接回复（楼中楼，2 层平铺），按时间正序 */
+export async function getRepliesByParentId(parentId: number): Promise<(Comment & { replyCount: number; userName: string; userAvatarUrl: string | null; replyToUserName: string | null })[]> {
   const db = await getDb();
   if (!db) return [];
 
@@ -423,12 +435,15 @@ export async function getRepliesByParentId(parentId: number): Promise<(Comment &
     if (r.parentId != null) countMap.set(r.parentId, Number(r.replyCount));
   });
 
-  // Batch-fetch user info for display names and avatars
-  const userIds = [...new Set(replies.filter((c) => c.userId != null).map((c) => c.userId as number))];
+  // Batch-fetch user info: commenter + replyToUser
+  const commenterIds = [...new Set(replies.filter((c) => c.userId != null).map((c) => c.userId as number))];
+  const replyToIds = [...new Set(replies.filter((c) => c.replyToUserId != null).map((c) => c.replyToUserId as number))];
+  const allUserIds = [...new Set([...commenterIds, ...replyToIds])];
+
   const userMap = new Map<number, { name: string | null; phone: string | null; avatarUrl: string | null }>();
-  if (userIds.length > 0) {
+  if (allUserIds.length > 0) {
     const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone, avatarUrl: users.avatarUrl })
-      .from(users).where(inArray(users.id, userIds));
+      .from(users).where(inArray(users.id, allUserIds));
     userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone, avatarUrl: u.avatarUrl ?? null }));
   }
 
@@ -437,6 +452,7 @@ export async function getRepliesByParentId(parentId: number): Promise<(Comment &
     replyCount: countMap.get(c.id) ?? 0,
     userName: buildUserName(c.userId != null ? userMap.get(c.userId) : null),
     userAvatarUrl: c.userId != null ? (userMap.get(c.userId)?.avatarUrl ?? null) : null,
+    replyToUserName: c.replyToUserId != null ? buildUserName(userMap.get(c.replyToUserId)) : null,
   }));
 }
 
