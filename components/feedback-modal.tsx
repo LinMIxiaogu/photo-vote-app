@@ -70,7 +70,7 @@ export function FeedbackModal({ visible, onClose }: Props) {
         type,
         content: content.trim(),
         contactInfo: contactInfo.trim() || undefined,
-        screenshot: screenshot ?? undefined,
+        screenshots: screenshot ? [screenshot] : undefined,
       });
       setSubmitted(true);
     } catch (e: any) {
@@ -196,26 +196,29 @@ export function FeedbackModal({ visible, onClose }: Props) {
 
               {/* Screenshot upload */}
               <Text style={[styles.label, { color: colors.muted }]}>截图（选填）</Text>
-              {screenshot ? (
-                <View style={styles.screenshotWrap}>
-                  <Image source={{ uri: screenshot }} style={styles.screenshotPreview} contentFit="cover" />
+              <View style={styles.screenshotRow}>
+                {screenshot && (
+                  <View style={styles.screenshotThumb}>
+                    <Image source={{ uri: screenshot }} style={styles.screenshotImg} contentFit="cover" />
+                    <Pressable
+                      onPress={() => { haptic(); setScreenshot(null); }}
+                      style={styles.screenshotDeleteBtn}
+                      hitSlop={6}
+                    >
+                      <IconSymbol name="xmark.circle.fill" size={22} color="#fff" />
+                    </Pressable>
+                  </View>
+                )}
+                {!screenshot && (
                   <Pressable
-                    onPress={() => { haptic(); setScreenshot(null); }}
-                    style={[styles.screenshotRemove, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                    onPress={pickScreenshot}
+                    style={[styles.screenshotAddBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
                   >
-                    <IconSymbol name="xmark.circle.fill" size={20} color={colors.muted} />
-                    <Text style={[styles.screenshotRemoveText, { color: colors.muted }]}>移除</Text>
+                    <IconSymbol name="plus" size={24} color={colors.muted} />
+                    <Text style={[styles.screenshotAddText, { color: colors.muted }]}>上传截图</Text>
                   </Pressable>
-                </View>
-              ) : (
-                <Pressable
-                  onPress={pickScreenshot}
-                  style={[styles.screenshotBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                >
-                  <IconSymbol name="photo.on.rectangle.angled" size={22} color={colors.muted} />
-                  <Text style={[styles.screenshotBtnText, { color: colors.muted }]}>上传截图</Text>
-                </Pressable>
-              )}
+                )}
+              </View>
 
               {/* Contact info */}
               <Text style={[styles.label, { color: colors.muted }]}>联系方式（选填）</Text>
@@ -340,6 +343,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: "right",
     marginTop: 2,
+  },
+  screenshotRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 4,
+  },
+  screenshotThumb: {
+    width: 100,
+    height: 100,
+    borderRadius: 10,
+    overflow: "visible",
+  },
+  screenshotImg: {
+    width: 100,
+    height: 100,
+    borderRadius: 10,
+  },
+  screenshotDeleteBtn: {
+    position: "absolute",
+    top: -8,
+    right: -8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  screenshotAddBtn: {
+    width: 100,
+    height: 100,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  screenshotAddText: {
+    fontSize: 12,
+    fontWeight: "500",
   },
   input: {
     borderWidth: 1,

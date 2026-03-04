@@ -90,6 +90,26 @@ export default function ImageTestScreen() {
   const translateY = useSharedValue(0);
   const cardOpacity = useSharedValue(1);
 
+  // Toast notification
+  const [toastMessage, setToastMessage] = useState("");
+  const toastOpacity = useSharedValue(0);
+  const toastTranslateY = useSharedValue(30);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: toastOpacity.value,
+    transform: [{ translateY: toastTranslateY.value }],
+  }));
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastOpacity.value = withTiming(1, { duration: 220 });
+    toastTranslateY.value = withSpring(0, { damping: 14, stiffness: 160 });
+    toastTimeoutRef.current = setTimeout(() => {
+      toastOpacity.value = withTiming(0, { duration: 300 });
+      toastTranslateY.value = withTiming(16, { duration: 300 });
+    }, 2000);
+  }, [toastOpacity, toastTranslateY]);
+
   const utils = trpc.useUtils();
 
   const fetchBatch = useCallback(
@@ -395,7 +415,7 @@ export default function ImageTestScreen() {
     const title = currentCard.title || "有趣的投票";
     const text = `${title} ${url} \n复制后打开【一选】参与投票！`;
     await Clipboard.setStringAsync(text);
-    Alert.alert("已复制", "链接已复制到剪贴板");
+    showToast("链接已复制到剪贴板");
   }, [currentCard, closeShareSheet]);
 
   const handleSelectPhoto = useCallback(
@@ -827,19 +847,7 @@ export default function ImageTestScreen() {
                     </View>
                   )}
                   <View style={styles.drawerInputRow}>
-                    {user?.avatarUrl ? (
-                      <Image
-                        source={{ uri: getImageUrl(user.avatarUrl) }}
-                        style={styles.drawerInputAvatar}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={styles.drawerInputAvatarFallback}>
-                        <Text style={styles.drawerInputAvatarText}>
-                          {user ? (user.name ?? "我").slice(-2) : "?"}
-                        </Text>
-                      </View>
-                    )}
+
                     <TextInput
                       style={styles.drawerInput}
                       placeholder={user ? "写下你的想法..." : "请先登录后评论"}
@@ -1036,6 +1044,19 @@ export default function ImageTestScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* 复制链接 Toast 提示 */}
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.toastContainer, { bottom: insets.bottom + 48 }, toastAnimatedStyle]}
+      >
+        <View style={styles.toastInner}>
+          <View style={styles.toastIconWrap}>
+            <IconSymbol name="checkmark.circle.fill" size={18} color="#22C55E" />
+          </View>
+          <Text style={styles.toastText}>{toastMessage}</Text>
+        </View>
+      </Animated.View>
     </GestureHandlerRootView>
   );
 }
@@ -1627,5 +1648,40 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.75)",
     fontSize: 12,
     textAlign: "center",
+  },
+  toastContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 9999,
+  },
+  toastInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(15, 15, 25, 0.88)",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  toastIconWrap: {
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toastText: {
+    color: "rgba(255,255,255,0.92)",
+    fontSize: 14,
+    fontWeight: "600",
+    letterSpacing: 0.2,
   },
 });
