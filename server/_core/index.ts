@@ -8,6 +8,8 @@ import { registerAdminRoutes } from "../admin";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { getCardById, getPhotosByCardId } from "../db";
+import { sdk } from "./sdk";
+import { storagePut } from "../storage";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -150,6 +152,40 @@ async function startServer() {
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(html);
+  });
+
+  // 通用图片上传接口：接收 base64，上传到 OSS，返回 URL
+  app.post("/api/upload", async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req);
+      if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
+    } catch {
+      res.status(401).json({ error: "Unauthorized" }); return;
+    }
+
+    const { base64, mimeType, directory } = req.body as { base64?: string; mimeType?: string; directory?: string };
+    if (!base64 || !mimeType) {
+      res.status(400).json({ error: "base64 and mimeType are required" }); return;
+    }
+    if (base64.length > 5_000_000) {
+      res.status(413).json({ error: "Image too large" }); return;
+    }
+
+    try {
+      const extension = (mimeType.split("/")[1] || "jpg").replace(/[^a-zA-Z0-9]/g, "");
+      const randomSuffix = Math.random().toString(36).substring(2, 10);
+      const dir = (directory ?? "comments").replace(/[^a-zA-Z0-9_-]/g, "");
+      const fileKey = `${dir}/${Date.now()}-${randomSuffix}.${extension}`;
+      console.log(`[upload] uploading key=${fileKey} size=${base64.length} mimeType=${mimeType}`);
+      const buffer = Buffer.from(base64, "base64");
+      const { url } = await storagePut(fileKey, buffer, mimeType);
+      console.log(`[upload] success url=${url}`);
+      res.json({ url });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[upload] storagePut failed:", msg);
+      res.status(500).json({ error: msg });
+    }
   });
 
   app.use(

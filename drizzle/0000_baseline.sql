@@ -55,6 +55,7 @@ CREATE TABLE `comments` (
 	`parentId` int,
 	`userId` int,
 	`content` text NOT NULL,
+	`images` json,
 	`createdAt` timestamp NOT NULL DEFAULT (now()),
 	CONSTRAINT `comments_id` PRIMARY KEY(`id`)
 );

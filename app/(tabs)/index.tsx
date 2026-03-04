@@ -8,6 +8,8 @@ import { trpc } from "@/lib/trpc";
 import { getImageUrl } from "@/lib/utils";
 import { getApiBaseUrl } from "@/constants/oauth";
 import * as MediaLibrary from "expo-media-library";
+import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as Linking from "expo-linking";
 import * as Clipboard from "expo-clipboard";
 import { captureRef } from "react-native-view-shot";
@@ -65,6 +67,9 @@ export default function ImageTestScreen() {
   const [userVotedAt, setUserVotedAt] = useState<string | null>(null); // voteDate "YYYY-MM-DD" 用于展示「某年某月某日参与投票」
   const [commentText, setCommentText] = useState("");
   const [showComments, setShowComments] = useState(false);
+  const [commentImages, setCommentImages] = useState<string[]>([]);
+  const [commentImageUrls, setCommentImageUrls] = useState<string[]>([]);
+  const [commentUploading, setCommentUploading] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   // 截图时临时隐藏分享按钮，避免按钮出现在截图中
@@ -247,15 +252,73 @@ export default function ImageTestScreen() {
   const createCommentMutation = trpc.comments.create.useMutation({
     onSuccess: () => {
       setCommentText("");
+      setCommentImages([]);
+      setCommentImageUrls([]);
       refetchComments();
     },
     onError: (error) => {
       console.error("Comment error:", error);
+      Alert.alert("发送失败", error.message || "请稍后重试");
     },
   });
 
+  const pickCommentImage = useCallback(async () => {
+    if (commentImages.length >= 2) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: "images",
+      allowsEditing: false,
+      quality: 1,
+      base64: false,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      setCommentUploading(true);
+      try {
+        // 压缩后立即上传拿 URL，tRPC 发评论时只传 URL
+        const compressed = await ImageManipulator.manipulateAsync(
+          asset.uri,
+          [{ resize: { width: 800 } }],
+          { compress: 0.6, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+        );
+        const base64 = compressed.base64 ?? "";
+        const apiBase = getApiBaseUrl();
+        const { getSessionToken } = await import("@/lib/_core/auth");
+        const token = await getSessionToken();
+        const uploadRes = await fetch(`${apiBase}/api/upload`, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ base64, mimeType: "image/jpeg", directory: "comments" }),
+        });
+        const json = await uploadRes.json() as { url?: string; error?: string };
+        if (!uploadRes.ok || !json.url) {
+          throw new Error(json.error ?? "图片上传失败");
+        }
+        setCommentImages((prev) => [...prev, compressed.uri]);
+        setCommentImageUrls((prev) => [...prev, json.url!]);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "图片上传失败，请重试";
+        Alert.alert("上传失败", msg);
+      } finally {
+        setCommentUploading(false);
+      }
+    }
+  }, [commentImages.length]);
+
+  const removeCommentImage = useCallback((index: number) => {
+    setCommentImages((prev) => prev.filter((_, i) => i !== index));
+    setCommentImageUrls((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   const handleSubmitComment = useCallback(() => {
-    if (!commentText.trim() || !currentCard) return;
+    const hasText = !!commentText.trim();
+    const hasImages = commentImageUrls.length > 0;
+    if (!hasText && !hasImages) return;
+    if (commentUploading) return;
+    if (!currentCard) return;
     if (!user) {
       if (Platform.OS === "web") window.alert("请先登录后评论");
       else Alert.alert("提示", "请先登录后评论", [{ text: "去登录", onPress: () => router.push("/login") }, { text: "取消" }]);
@@ -264,8 +327,9 @@ export default function ImageTestScreen() {
     createCommentMutation.mutate({
       cardId: currentCard.id,
       content: commentText.trim(),
+      imageUrls: commentImageUrls.length > 0 ? commentImageUrls : undefined,
     });
-  }, [commentText, currentCard, createCommentMutation, user, router]);
+  }, [commentText, commentImages, commentImageUrls, commentUploading, currentCard, createCommentMutation, user, router]);
 
   const handleToggleFavorite = useCallback(() => {
     if (!currentCard) return;
@@ -398,6 +462,8 @@ export default function ImageTestScreen() {
     setAllPhotoStats([]);
     setShowComments(false);
     setCommentText("");
+    setCommentImages([]);
+    setCommentImageUrls([]);
     setIsFavorited(false);
     setExpandedPhotoIndex(null);
     translateY.value = 0;
@@ -744,7 +810,36 @@ export default function ImageTestScreen() {
                   behavior={Platform.OS === "ios" ? "padding" : "height"}
                   style={styles.drawerBody}
                 >
+                  {commentImages.length > 0 && (
+                    <View style={styles.drawerImagePreviewRow}>
+                      {commentImages.map((uri, idx) => (
+                        <View key={idx} style={styles.drawerImagePreviewWrap}>
+                          <Image source={{ uri }} style={styles.drawerImagePreview} contentFit="cover" />
+                          <Pressable
+                            style={styles.drawerImageRemoveBtn}
+                            onPress={() => removeCommentImage(idx)}
+                            hitSlop={8}
+                          >
+                            <IconSymbol name="xmark.circle.fill" size={18} color="#6B7280" />
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                   <View style={styles.drawerInputRow}>
+                    {user?.avatarUrl ? (
+                      <Image
+                        source={{ uri: getImageUrl(user.avatarUrl) }}
+                        style={styles.drawerInputAvatar}
+                        contentFit="cover"
+                      />
+                    ) : (
+                      <View style={styles.drawerInputAvatarFallback}>
+                        <Text style={styles.drawerInputAvatarText}>
+                          {user ? (user.name ?? "我").slice(-2) : "?"}
+                        </Text>
+                      </View>
+                    )}
                     <TextInput
                       style={styles.drawerInput}
                       placeholder={user ? "写下你的想法..." : "请先登录后评论"}
@@ -755,25 +850,34 @@ export default function ImageTestScreen() {
                       maxLength={500}
                       editable={!!user}
                     />
-                    <Pressable
-                      onPress={handleSubmitComment}
-                      disabled={!user || !commentText.trim() || createCommentMutation.isPending}
-                      style={[
-                        styles.drawerSendBtn,
-                        (!user || !commentText.trim() || createCommentMutation.isPending) &&
-                          styles.drawerSendBtnDisabled,
-                      ]}
-                    >
-                      <IconSymbol
-                        name="paperplane.fill"
-                        size={20}
-                        color={
-                          user && commentText.trim() && !createCommentMutation.isPending
-                            ? "#ffffff"
-                            : "#D1D5DB"
+                    <View style={styles.drawerInputActions}>
+                      <Pressable
+                        onPress={pickCommentImage}
+                        disabled={!user || commentImages.length >= 2 || commentUploading}
+                        style={[styles.drawerImageBtn, (!user || commentImages.length >= 2 || commentUploading) && styles.drawerImageBtnDisabled]}
+                        hitSlop={4}
+                      >
+                        {commentUploading
+                          ? <ActivityIndicator size={16} color="#6366F1" />
+                          : <IconSymbol name="photo.fill" size={20} color={user && commentImages.length < 2 ? "#6366F1" : "#D1D5DB"} />
                         }
-                      />
-                    </Pressable>
+                      </Pressable>
+                      <Pressable
+                        onPress={handleSubmitComment}
+                        disabled={!user || (!commentText.trim() && commentImageUrls.length === 0) || createCommentMutation.isPending || commentUploading}
+                        style={[
+                          styles.drawerSendBtn,
+                          (!user || (!commentText.trim() && commentImageUrls.length === 0) || createCommentMutation.isPending || commentUploading) &&
+                            styles.drawerSendBtnDisabled,
+                        ]}
+                      >
+                        <Text style={[
+                          styles.drawerSendBtnText,
+                          (!user || (!commentText.trim() && commentImageUrls.length === 0) || createCommentMutation.isPending || commentUploading) &&
+                            styles.drawerSendBtnTextDisabled,
+                        ]}>发送</Text>
+                      </Pressable>
+                    </View>
                   </View>
                   <RNScrollView
                     style={styles.drawerCommentsList}
@@ -796,9 +900,9 @@ export default function ImageTestScreen() {
                         return (
                           <View key={comment.id} style={styles.drawerCommentItem}>
                             <View style={styles.drawerCommentAvatarWrap}>
-                              {votedPhoto ? (
+                              {comment.userAvatarUrl ? (
                                 <Image
-                                  source={{ uri: getImageUrl(votedPhoto.url) }}
+                                  source={{ uri: getImageUrl(comment.userAvatarUrl) }}
                                   style={styles.drawerCommentAvatarPhoto}
                                   contentFit="cover"
                                 />
@@ -825,7 +929,21 @@ export default function ImageTestScreen() {
                                   </View>
                                 )}
                               </View>
-                              <Text style={styles.drawerCommentContent}>{comment.content}</Text>
+                              {!!comment.content && (
+                                <Text style={styles.drawerCommentContent}>{comment.content}</Text>
+                              )}
+                              {comment.images && comment.images.length > 0 && (
+                                <View style={styles.drawerCommentImagesRow}>
+                                  {comment.images.map((imgUrl, imgIdx) => (
+                                    <Image
+                                      key={imgIdx}
+                                      source={{ uri: getImageUrl(imgUrl) }}
+                                      style={styles.drawerCommentImage}
+                                      contentFit="cover"
+                                    />
+                                  ))}
+                                </View>
+                              )}
                               <Text style={styles.drawerCommentTime}>
                                 {new Date(comment.createdAt).toLocaleString("zh-CN", {
                                   month: "2-digit",
@@ -1103,8 +1221,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: SCREEN_HEIGHT * 0.7,
-    minHeight: 280,
+    height: SCREEN_HEIGHT * 0.65,
+    minHeight: SCREEN_HEIGHT * 0.65,
+    maxHeight: SCREEN_HEIGHT * 0.65,
   },
   drawerHandleWrap: {
     alignItems: "center",
@@ -1136,11 +1255,70 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     minHeight: 200,
   },
+  drawerImagePreviewRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 8,
+  },
+  drawerImagePreviewWrap: {
+    position: "relative",
+    width: 72,
+    height: 72,
+  },
+  drawerImagePreview: {
+    width: 72,
+    height: 72,
+    borderRadius: 8,
+    backgroundColor: "#F3F4F6",
+  },
+  drawerImageRemoveBtn: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    backgroundColor: "#fff",
+    borderRadius: 10,
+  },
   drawerInputRow: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 12,
+    gap: 8,
     marginBottom: 12,
+  },
+  drawerInputAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    marginBottom: 2,
+  },
+  drawerInputAvatarFallback: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#E0E7FF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 2,
+  },
+  drawerInputAvatarText: {
+    fontSize: 12,
+    color: "#6366F1",
+    fontWeight: "600",
+  },
+  drawerInputActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  drawerImageBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#EEF2FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  drawerImageBtnDisabled: {
+    opacity: 0.4,
   },
   drawerInput: {
     flex: 1,
@@ -1153,15 +1331,23 @@ const styles = StyleSheet.create({
     maxHeight: 80,
   },
   drawerSendBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    height: 36,
+    paddingHorizontal: 16,
+    borderRadius: 18,
     backgroundColor: "#6366F1",
     justifyContent: "center",
     alignItems: "center",
   },
   drawerSendBtnDisabled: {
     backgroundColor: "#E5E7EB",
+  },
+  drawerSendBtnText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  drawerSendBtnTextDisabled: {
+    color: "#9CA3AF",
   },
   drawerCommentsList: {
     flex: 1,
@@ -1259,6 +1445,18 @@ const styles = StyleSheet.create({
   drawerCommentTime: {
     color: "#9CA3AF",
     fontSize: 12,
+  },
+  drawerCommentImagesRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 4,
+    flexWrap: "wrap",
+  },
+  drawerCommentImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    backgroundColor: "#F3F4F6",
   },
   stateBox: {
     flex: 1,

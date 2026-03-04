@@ -28,7 +28,7 @@ const schemeFromBundleId = `manus${timestamp}`;
 
 const env = {
   // App branding - update these values directly (do not use env vars)
-  appName: "第一印象",
+  appName: "一选",
   appSlug: "photo-vote-app",
   // S3 URL of the app logo - set this to the URL returned by generate_image when creating custom logo
   // Leave empty to use the default icon from assets/images/icon.png
@@ -111,8 +111,8 @@ const config: ExpoConfig = {
     [
       "expo-media-library",
       {
-        photosPermission: "Allow 第一印象 to access your photos.",
-        savePhotosPermission: "Allow 第一印象 to save photos to your library.",
+        photosPermission: "Allow 一选 to access your photos.",
+        savePhotosPermission: "Allow 一选 to save photos to your library.",
         isAccessMediaLocationEnabled: false,
       },
     ],

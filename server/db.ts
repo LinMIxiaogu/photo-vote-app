@@ -330,7 +330,7 @@ export async function createComment(data: InsertComment): Promise<number> {
 }
 
 /** 主评论列表（仅 parentId 为 null），按热度（回复数）+ 时间排序 */
-export async function getTopLevelCommentsByCardId(cardId: number): Promise<(Comment & { replyCount: number; userName: string })[]> {
+export async function getTopLevelCommentsByCardId(cardId: number): Promise<(Comment & { replyCount: number; userName: string; userAvatarUrl: string | null })[]> {
   const db = await getDb();
   if (!db) return [];
 
@@ -366,23 +366,24 @@ export async function getTopLevelCommentsByCardId(cardId: number): Promise<(Comm
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 
-  // Batch-fetch user info for display names
+  // Batch-fetch user info for display names and avatars
   const userIds = [...new Set(withCount.filter((c) => c.userId != null).map((c) => c.userId as number))];
-  const userMap = new Map<number, { name: string | null; phone: string | null }>();
+  const userMap = new Map<number, { name: string | null; phone: string | null; avatarUrl: string | null }>();
   if (userIds.length > 0) {
-    const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone })
+    const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone, avatarUrl: users.avatarUrl })
       .from(users).where(inArray(users.id, userIds));
-    userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone }));
+    userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone, avatarUrl: u.avatarUrl ?? null }));
   }
 
   return withCount.map((c) => ({
     ...c,
     userName: buildUserName(c.userId != null ? userMap.get(c.userId) : null),
+    userAvatarUrl: c.userId != null ? (userMap.get(c.userId)?.avatarUrl ?? null) : null,
   }));
 }
 
 /** 某条评论下的直接回复（楼中楼），按时间正序 */
-export async function getRepliesByParentId(parentId: number): Promise<(Comment & { replyCount: number; userName: string })[]> {
+export async function getRepliesByParentId(parentId: number): Promise<(Comment & { replyCount: number; userName: string; userAvatarUrl: string | null })[]> {
   const db = await getDb();
   if (!db) return [];
 
@@ -406,19 +407,20 @@ export async function getRepliesByParentId(parentId: number): Promise<(Comment &
     if (r.parentId != null) countMap.set(r.parentId, Number(r.replyCount));
   });
 
-  // Batch-fetch user info for display names
+  // Batch-fetch user info for display names and avatars
   const userIds = [...new Set(replies.filter((c) => c.userId != null).map((c) => c.userId as number))];
-  const userMap = new Map<number, { name: string | null; phone: string | null }>();
+  const userMap = new Map<number, { name: string | null; phone: string | null; avatarUrl: string | null }>();
   if (userIds.length > 0) {
-    const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone })
+    const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone, avatarUrl: users.avatarUrl })
       .from(users).where(inArray(users.id, userIds));
-    userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone }));
+    userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone, avatarUrl: u.avatarUrl ?? null }));
   }
 
   return replies.map((c) => ({
     ...c,
     replyCount: countMap.get(c.id) ?? 0,
     userName: buildUserName(c.userId != null ? userMap.get(c.userId) : null),
+    userAvatarUrl: c.userId != null ? (userMap.get(c.userId)?.avatarUrl ?? null) : null,
   }));
 }
 

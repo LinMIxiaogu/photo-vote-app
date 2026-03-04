@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean } from "drizzle-orm/mysql-core";
+import { int, json, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -105,6 +105,8 @@ export const comments = mysqlTable("comments", {
   userId: int("userId"),
   /** Comment content */
   content: text("content").notNull(),
+  /** Optional image URLs attached to this comment (max 2), stored as JSON array */
+  images: json("images").$type<string[]>(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

@@ -323,14 +323,18 @@ export const appRouter = router({
         return { replies: repliesWithVotes, parentUserName };
       }),
 
-    // 发表评论：已投票或已收藏方可发表
+    // 发表评论：已投票或已收藏方可发表（images 为已上传的 URL 数组，由客户端先调用 /api/upload 获得）
     create: protectedProcedure
       .input(z.object({
         cardId: z.number(),
-        content: z.string().min(1).max(500),
+        content: z.string().min(0).max(500),
         parentId: z.number().optional(),
+        imageUrls: z.array(z.string().url()).max(2).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        if (!input.content.trim() && (!input.imageUrls || input.imageUrls.length === 0)) {
+          throw new Error("评论内容不能为空");
+        }
         const hasVoted = await db.hasVotedOnCard(ctx.user.id, input.cardId);
         const hasFavorited = await db.isFavoritedByUserId(ctx.user.id, input.cardId);
         if (!hasVoted && !hasFavorited) {
@@ -345,8 +349,9 @@ export const appRouter = router({
         const commentId = await db.createComment({
           cardId: input.cardId,
           userId: ctx.user.id,
-          content: input.content,
+          content: input.content.trim(),
           parentId: input.parentId ?? undefined,
+          ...(input.imageUrls?.length ? { images: input.imageUrls } : {}),
         });
         return { commentId };
       }),
