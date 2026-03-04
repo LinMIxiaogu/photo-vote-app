@@ -215,6 +215,22 @@ export async function deleteCard(cardId: number, userId: number): Promise<boolea
   return true;
 }
 
+/** Update a card's title and/or description. Only allowed for card owner (userId). */
+export async function updateCard(
+  cardId: number,
+  userId: number,
+  data: { title?: string | null; description?: string | null }
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const card = await getCardById(cardId);
+  if (!card || card.userId !== userId) return false;
+
+  await db.update(cards).set(data).where(and(eq(cards.id, cardId), eq(cards.userId, userId)));
+  return true;
+}
+
 // ==================== Photo Operations ====================
 
 export async function createPhotos(data: InsertPhoto[]): Promise<void> {

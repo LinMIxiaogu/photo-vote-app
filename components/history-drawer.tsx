@@ -1,11 +1,13 @@
 import { View, Text, Pressable, StyleSheet, Modal, FlatList, Platform, Alert } from "react-native";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
+import { useState } from "react";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { trpc } from "@/lib/trpc";
 import { getImageUrl } from "@/lib/utils";
 import * as Haptics from "expo-haptics";
+import { EditCardModal } from "@/components/edit-card-modal";
 
 interface HistoryDrawerProps {
   visible: boolean;
@@ -21,6 +23,8 @@ export function HistoryDrawer({ visible, onClose }: HistoryDrawerProps) {
     undefined,
     { enabled: visible }
   );
+
+  const [editingCard, setEditingCard] = useState<{ id: number; title?: string | null; description?: string | null } | null>(null);
 
   const deleteCardMutation = trpc.cards.delete.useMutation({
     onSuccess: () => {
@@ -46,6 +50,13 @@ export function HistoryDrawer({ visible, onClose }: HistoryDrawerProps) {
         },
       ]
     );
+  };
+
+  const handleEdit = (item: any) => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setEditingCard({ id: item.id, title: item.title, description: item.description });
   };
 
   const handleCardPress = (cardId: number, isCompleted: boolean) => {
@@ -113,19 +124,30 @@ export function HistoryDrawer({ visible, onClose }: HistoryDrawerProps) {
             </View>
           )}
         </Pressable>
-        <Pressable onPress={() => handleDelete(item.id)} hitSlop={8} accessibilityLabel="删除该卡片">
-          {({ pressed }) => (
-            <View style={[styles.deleteButton, pressed && styles.deleteButtonPressed]}>
-              <IconSymbol name="trash.fill" size={22} color="#EF4444" />
-              <Text style={styles.deleteLabel}>删除</Text>
-            </View>
-          )}
-        </Pressable>
+        <View style={styles.actionColumn}>
+          <Pressable onPress={() => handleEdit(item)} hitSlop={8} accessibilityLabel="编辑该卡片">
+            {({ pressed }) => (
+              <View style={[styles.actionButton, pressed && styles.actionButtonPressed]}>
+                <IconSymbol name="pencil" size={20} color={colors.tint} />
+                <Text style={[styles.actionLabel, { color: colors.tint }]}>编辑</Text>
+              </View>
+            )}
+          </Pressable>
+          <Pressable onPress={() => handleDelete(item.id)} hitSlop={8} accessibilityLabel="删除该卡片">
+            {({ pressed }) => (
+              <View style={[styles.actionButton, pressed && styles.actionButtonPressed]}>
+                <IconSymbol name="trash.fill" size={20} color="#EF4444" />
+                <Text style={[styles.actionLabel, { color: "#EF4444" }]}>删除</Text>
+              </View>
+            )}
+          </Pressable>
+        </View>
       </View>
     );
   };
 
   return (
+    <>
     <Modal
       visible={visible}
       animationType="slide"
@@ -171,6 +193,12 @@ export function HistoryDrawer({ visible, onClose }: HistoryDrawerProps) {
         </View>
       </View>
     </Modal>
+    <EditCardModal
+      visible={editingCard !== null}
+      card={editingCard}
+      onClose={() => setEditingCard(null)}
+    />
+    </>
   );
 }
 
@@ -246,22 +274,24 @@ const styles = StyleSheet.create({
   cardItemPressed: {
     opacity: 0.8,
   },
-  deleteButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+  actionColumn: {
+    flexDirection: "column",
     justifyContent: "center",
+    gap: 4,
     flexShrink: 0,
-    alignSelf: "center",
   },
-  deleteButtonPressed: {
+  actionButton: {
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  actionButtonPressed: {
     opacity: 0.7,
   },
-  deleteLabel: {
-    fontSize: 14,
-    color: "#EF4444",
+  actionLabel: {
+    fontSize: 11,
     fontWeight: "500",
   },
   cardThumbnail: {

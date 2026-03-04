@@ -128,7 +128,7 @@ export default function EditCopyScreen() {
             <View style={styles.placeholder} />
           </View>
 
-          <Text style={styles.subtitle}>为你的投票卡片添加标题和说明</Text>
+          <Text style={styles.subtitle}>为你的投票卡片添加标题</Text>
 
           {/* Photo preview grid (read-only) */}
           <View style={styles.gridContainer}>
@@ -181,23 +181,7 @@ export default function EditCopyScreen() {
               <Text style={styles.charCount}>{title.length}/15</Text>
             </View>
 
-            <View style={styles.fieldGroup}>
-              <View style={styles.labelRow}>
-                <Text style={styles.fieldLabel}>说明</Text>
-                <Text style={styles.optionalTag}>选填</Text>
-              </View>
-              <TextInput
-                style={[styles.textInput, styles.textArea]}
-                placeholder="添加一些描述或背景信息..."
-                placeholderTextColor="#9CA3AF"
-                value={description}
-                onChangeText={setDescription}
-                multiline
-                maxLength={200}
-                textAlignVertical="top"
-              />
-              <Text style={styles.charCount}>{description.length}/200</Text>
-            </View>
+            {/* 说明字段 — 暂时隐藏，后续再上 */}
           </View>
 
           <View style={styles.footer}>

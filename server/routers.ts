@@ -118,6 +118,24 @@ export const appRouter = router({
         return { success: true };
       }),
 
+    // Update title and description of own card
+    update: protectedProcedure
+      .input(z.object({
+        cardId: z.number(),
+        title: z.string().max(14).nullable().optional(),
+        description: z.string().max(2000).nullable().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const updated = await db.updateCard(input.cardId, ctx.user.id, {
+          title: input.title,
+          description: input.description,
+        });
+        if (!updated) {
+          throw new Error("无法修改该卡片（仅可修改自己的上传）");
+        }
+        return { success: true };
+      }),
+
     // Get a random card to vote on
     getRandomForVoting: protectedProcedure
       .query(async ({ ctx }) => {

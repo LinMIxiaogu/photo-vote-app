@@ -141,6 +141,8 @@ export const feedbacks = mysqlTable("feedbacks", {
   content: text("content").notNull(),
   /** Optional contact info (email or phone) provided by user */
   contactInfo: varchar("contactInfo", { length: 255 }),
+  /** Optional screenshots stored as JSON array of base64 data URLs */
+  screenshot: text("screenshot"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
