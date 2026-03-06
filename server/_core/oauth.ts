@@ -1,11 +1,12 @@
 import { COOKIE_NAME, ONE_YEAR_MS } from "../../shared/const.js";
 import type { Express, Request, Response } from "express";
-import { getUserByOpenId, getUserByPhone, createUserWithPhone, createUserByPhone, upsertUser } from "../db";
+import { getUserByOpenId, getUserByPhone, createUserWithPhone, createUserByPhone, upsertUser, createModerationRecord } from "../db";
 import { phoneToOpenId } from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { hashPassword, verifyPassword } from "./password";
 import { sdk } from "./sdk";
 import { loginBySmsCode, sendSmsCode } from "./hermitPurpleAuthService";
+import { moderateText } from "./aliyunTextModeration";
 
 /** 中国大陆手机号：1 开头，第二位 3-9，共 11 位 */
 const PHONE_REGEX = /^1[3-9]\d{9}$/;
@@ -34,19 +35,44 @@ async function syncUser(userInfo: {
     throw new Error("openId missing from user info");
   }
 
+  const existing = await getUserByOpenId(userInfo.openId);
+  const incomingName = userInfo.name || null;
+  let nameModerationStatus = existing?.nameModerationStatus ?? "approved";
+  let shouldRecordName = false;
+  let nameAutoResult: "pass" | "review" | "block" | undefined;
+  let nameAutoMessage: string | undefined;
+
+  if (incomingName && incomingName !== existing?.name) {
+    const mod = await moderateText(incomingName, "nickname_detection");
+    nameModerationStatus = mod.pass ? "approved" : "pending";
+    nameAutoResult = mod.pass ? "pass" : (mod.result ?? "block");
+    nameAutoMessage = mod.pass ? undefined : mod.message;
+    shouldRecordName = true;
+  }
+
   const lastSignedIn = new Date();
   await upsertUser({
     openId: userInfo.openId,
-    name: userInfo.name || null,
+    name: incomingName,
     email: userInfo.email ?? null,
     loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
     lastSignedIn,
+    nameModerationStatus,
   });
   const saved = await getUserByOpenId(userInfo.openId);
+  if (shouldRecordName && saved?.id) {
+    await createModerationRecord({
+      targetType: "user_name",
+      targetId: saved.id,
+      status: nameModerationStatus,
+      autoResult: nameAutoResult,
+      autoMessage: nameAutoMessage ?? null,
+    });
+  }
   return (
     saved ?? {
       openId: userInfo.openId,
-      name: userInfo.name,
+      name: incomingName,
       email: userInfo.email,
       loginMethod: userInfo.loginMethod ?? null,
       lastSignedIn,
@@ -63,6 +89,9 @@ function buildUserResponse(
         name?: string | null;
         email?: string | null;
         phone?: string | null;
+        avatarUrl?: string | null;
+        nameModerationStatus?: string;
+        avatarModerationStatus?: string;
         loginMethod?: string | null;
         lastSignedIn?: Date | null;
       },
@@ -73,6 +102,9 @@ function buildUserResponse(
     name: user?.name ?? null,
     email: user?.email ?? null,
     phone: (user as any)?.phone ?? null,
+    avatarUrl: (user as any)?.avatarUrl ?? null,
+    nameModerationStatus: (user as any)?.nameModerationStatus ?? "approved",
+    avatarModerationStatus: (user as any)?.avatarModerationStatus ?? "approved",
     loginMethod: user?.loginMethod ?? null,
     lastSignedIn: (user?.lastSignedIn ?? new Date()).toISOString(),
   };

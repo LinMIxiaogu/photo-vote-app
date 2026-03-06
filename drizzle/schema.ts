@@ -1,5 +1,9 @@
 import { int, json, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean } from "drizzle-orm/mysql-core";
 
+const moderationStatusValues = ["approved", "pending", "rejected"] as const;
+const moderationTargetValues = ["card", "photo", "comment", "user_name", "user_avatar"] as const;
+const moderationAutoResultValues = ["pass", "review", "block"] as const;
+
 /**
  * Core user table backing auth flow.
  * Extend this file with additional tables as your product grows.
@@ -23,6 +27,10 @@ export const users = mysqlTable("users", {
   hermitUserUUID: varchar("hermitUserUUID", { length: 64 }),
   /** Avatar image URL (uploaded by user). */
   avatarUrl: varchar("avatarUrl", { length: 512 }),
+  /** Moderation status for user display name */
+  nameModerationStatus: mysqlEnum("nameModerationStatus", moderationStatusValues).default("approved").notNull(),
+  /** Moderation status for user avatar */
+  avatarModerationStatus: mysqlEnum("avatarModerationStatus", moderationStatusValues).default("approved").notNull(),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -42,6 +50,8 @@ export const cards = mysqlTable("cards", {
   userId: int("userId"),
   title: varchar("title", { length: 14 }),
   description: text("description"),
+  /** Moderation status */
+  moderationStatus: mysqlEnum("moderationStatus", moderationStatusValues).default("approved").notNull(),
   /** Total number of votes collected */
   totalVotes: int("totalVotes").default(0).notNull(),
   /** Whether the card has reached 30 votes */
@@ -64,6 +74,8 @@ export const photos = mysqlTable("photos", {
   url: varchar("url", { length: 512 }).notNull(),
   /** Index of the photo within the card (0-3) */
   photoIndex: int("photoIndex").notNull(),
+  /** Moderation status */
+  moderationStatus: mysqlEnum("moderationStatus", moderationStatusValues).default("approved").notNull(),
   /** Number of votes this photo received */
   voteCount: int("voteCount").default(0).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -109,6 +121,8 @@ export const comments = mysqlTable("comments", {
   content: text("content").notNull(),
   /** Optional image URLs attached to this comment (max 2), stored as JSON array */
   images: json("images").$type<string[]>(),
+  /** Moderation status */
+  moderationStatus: mysqlEnum("moderationStatus", moderationStatusValues).default("approved").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -148,5 +162,28 @@ export const feedbacks = mysqlTable("feedbacks", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const moderationRecords = mysqlTable("moderation_records", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Target content type */
+  targetType: mysqlEnum("targetType", moderationTargetValues).notNull(),
+  /** Target record id (users.id for user_name/user_avatar) */
+  targetId: int("targetId").notNull(),
+  /** Current moderation status */
+  status: mysqlEnum("status", moderationStatusValues).notNull(),
+  /** Auto moderation result */
+  autoResult: mysqlEnum("autoResult", moderationAutoResultValues),
+  /** Auto moderation message or reason */
+  autoMessage: text("autoMessage"),
+  /** Manual review reason */
+  manualReason: text("manualReason"),
+  /** Admin user id who made the decision */
+  moderatorUserId: int("moderatorUserId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type Feedback = typeof feedbacks.$inferSelect;
 export type InsertFeedback = typeof feedbacks.$inferInsert;
+
+export type ModerationRecord = typeof moderationRecords.$inferSelect;
+export type InsertModerationRecord = typeof moderationRecords.$inferInsert;

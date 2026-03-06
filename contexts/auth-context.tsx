@@ -34,6 +34,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             email: apiUser.email,
             phone: apiUser.phone ?? null,
             avatarUrl: apiUser.avatarUrl ?? null,
+            nameModerationStatus: apiUser.nameModerationStatus,
+            avatarModerationStatus: apiUser.avatarModerationStatus,
             loginMethod: apiUser.loginMethod,
             lastSignedIn: new Date(apiUser.lastSignedIn),
           };

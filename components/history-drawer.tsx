@@ -74,6 +74,7 @@ export function HistoryDrawer({ visible, onClose }: HistoryDrawerProps) {
   const renderCard = ({ item }: { item: any }) => {
     const firstPhoto = item.photos?.[0];
     const progress = Math.round((item.totalVotes / 10) * 100);
+    const moderationStatus = item.moderationStatus as "approved" | "pending" | "rejected" | undefined;
 
     return (
       <View style={[styles.cardItem, styles.cardShadow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -119,6 +120,20 @@ export function HistoryDrawer({ visible, onClose }: HistoryDrawerProps) {
                     {item.isCompleted ? "已完成" : "进行中"}
                   </Text>
                 </View>
+                {moderationStatus && moderationStatus !== "approved" && (
+                  <View style={[
+                    styles.statusBadge,
+                    moderationStatus === "rejected" ? styles.statusRejected : styles.statusPending,
+                    { backgroundColor: moderationStatus === "rejected" ? "rgba(239, 68, 68, 0.12)" : "rgba(245, 158, 11, 0.12)" }
+                  ]}>
+                    <Text style={[
+                      styles.statusText,
+                      { color: moderationStatus === "rejected" ? "#EF4444" : "#F59E0B" }
+                    ]}>
+                      {moderationStatus === "pending" ? "审核中" : "未通过"}
+                    </Text>
+                  </View>
+                )}
               </View>
               <IconSymbol name="chevron.right" size={20} color={colors.muted} />
             </View>
@@ -346,6 +361,8 @@ const styles = StyleSheet.create({
   statusCompleted: {
   },
   statusPending: {
+  },
+  statusRejected: {
   },
   statusText: {
     fontSize: 12,

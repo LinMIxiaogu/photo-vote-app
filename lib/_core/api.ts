@@ -131,6 +131,8 @@ export async function getMe(): Promise<{
   email: string | null;
   phone: string | null;
   avatarUrl: string | null;
+  nameModerationStatus: "approved" | "pending" | "rejected";
+  avatarModerationStatus: "approved" | "pending" | "rejected";
   loginMethod: string | null;
   lastSignedIn: string;
 } | null> {
@@ -153,7 +155,7 @@ export async function sendVerificationCode(phone: string): Promise<{ success: bo
 
 // Phone login with verification code (any 6-digit code is accepted when SMS not integrated)
 export async function phoneLoginWithCode(phone: string, code: string): Promise<{
-  user: { id: number; openId: string; name: string | null; email: string | null; phone: string | null; avatarUrl: string | null; loginMethod: string | null; lastSignedIn: string };
+  user: { id: number; openId: string; name: string | null; email: string | null; phone: string | null; avatarUrl: string | null; nameModerationStatus: "approved" | "pending" | "rejected"; avatarModerationStatus: "approved" | "pending" | "rejected"; loginMethod: string | null; lastSignedIn: string };
   token: string;
 }> {
   const result = await apiCall<{ user: any; token: string }>("/api/auth/phone-login", {

@@ -72,12 +72,26 @@ export default function WaitingScreen() {
         {/* Status */}
         <View style={styles.statusContainer}>
           <Text style={styles.statusTitle}>
-            {card?.isCompleted ? "投票完成！" : "正在收集投票..."}
+            {!card
+              ? "内容审核中"
+              : card?.moderationStatus === "pending"
+              ? "内容审核中"
+              : card?.moderationStatus === "rejected"
+                ? "内容未通过审核"
+                : card?.isCompleted
+                  ? "投票完成！"
+                  : "正在收集投票..."}
           </Text>
           <Text style={styles.statusSubtitle}>
-            {card?.isCompleted
-              ? "点击下方按钮查看结果"
-              : "收集满10票后自动显示结果"}
+            {!card
+              ? "审核通过后将对外展示"
+              : card?.moderationStatus === "pending"
+              ? "审核通过后将对外展示"
+              : card?.moderationStatus === "rejected"
+                ? "请修改后重新提交"
+                : card?.isCompleted
+                  ? "点击下方按钮查看结果"
+                  : "收集满10票后自动显示结果"}
           </Text>
         </View>
 

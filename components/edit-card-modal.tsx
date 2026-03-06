@@ -41,8 +41,11 @@ export function EditCardModal({ visible, onClose, card, onSuccess }: Props) {
   const utils = trpc.useUtils();
 
   const updateMutation = trpc.cards.update.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       utils.cards.getMyCards.invalidate();
+      if (data?.pendingReview) {
+        Alert.alert("提示", "内容已提交审核，审核通过后将对外展示");
+      }
       onSuccess?.();
       onClose();
     },

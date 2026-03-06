@@ -21,6 +21,7 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const initialInsets = initialWindowMetrics?.insets ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const initialFrame = initialWindowMetrics?.frame ?? { x: 0, y: 0, width: 0, height: 0 };
 
   // Create clients once and reuse them
   const [queryClient] = useState(

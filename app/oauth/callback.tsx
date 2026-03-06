@@ -51,6 +51,8 @@ export default function OAuthCallback() {
                 email: userData.email ?? null,
                 phone: userData.phone ?? null,
                 avatarUrl: userData.avatarUrl ?? null,
+                nameModerationStatus: userData.nameModerationStatus ?? "approved",
+                avatarModerationStatus: userData.avatarModerationStatus ?? "approved",
                 loginMethod: userData.loginMethod ?? null,
                 lastSignedIn: new Date(userData.lastSignedIn || Date.now()),
               };
@@ -204,6 +206,8 @@ export default function OAuthCallback() {
               email: result.user.email ?? null,
               phone: (result.user as any).phone ?? null,
               avatarUrl: (result.user as any).avatarUrl ?? null,
+              nameModerationStatus: (result.user as any).nameModerationStatus ?? "approved",
+              avatarModerationStatus: (result.user as any).avatarModerationStatus ?? "approved",
               loginMethod: result.user.loginMethod ?? null,
               lastSignedIn: new Date(result.user.lastSignedIn || Date.now()),
             };

@@ -45,7 +45,8 @@ async function remotePut(
 
   const body = typeof data === "string" ? Buffer.from(data, "utf8") : data;
   const form = new FormData();
-  form.append("file", new Blob([body], { type: contentType }), fileName || "file");
+  const blobBody = Uint8Array.from(body);
+  form.append("file", new Blob([blobBody], { type: contentType }), fileName || "file");
   form.append("directory", directory);
   form.append("fileName", fileName || "file");
 

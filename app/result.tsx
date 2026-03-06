@@ -61,10 +61,13 @@ export default function ResultScreen() {
   });
 
   const createCommentMutation = trpc.comments.create.useMutation({
-    onSuccess: (_data, vars) => {
+    onSuccess: (data, vars) => {
       setCommentText("");
       setReplyingTo(null);
       refetchComments();
+      if (data?.pendingReview) {
+        Alert.alert("提示", "评论已提交审核，通过后将展示");
+      }
       // 发布回复后折叠该主评论的回复区，等用户再次展开时刷新
       if (vars.parentId != null) {
         setExpandedReplies((prev) => {

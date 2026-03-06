@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { COOKIE_NAME } from "../shared/const.js";
+import { moderateImages } from "./_core/aliyunImageModeration";
+import { moderateText } from "./_core/aliyunTextModeration";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -38,8 +40,18 @@ export const appRouter = router({
         const fileKey = `avatars/${ctx.user.id}-${randomSuffix}.${extension}`;
         const buffer = Buffer.from(input.base64, "base64");
         const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        const imageMod = await moderateImages([url]);
+        const status = imageMod.pass ? "approved" : "pending";
         await db.updateUserAvatar(ctx.user.id, url);
-        return { avatarUrl: url };
+        await db.updateUserAvatarModerationStatus(ctx.user.id, status);
+        await db.createModerationRecord({
+          targetType: "user_avatar",
+          targetId: ctx.user.id,
+          status,
+          autoResult: imageMod.pass ? "pass" : "block",
+          autoMessage: imageMod.pass ? null : (imageMod.message ?? "Avatar image needs review"),
+        });
+        return { avatarUrl: url, pendingReview: !imageMod.pass };
       }),
   }),
 
@@ -60,7 +72,10 @@ export const appRouter = router({
           userId: ctx.user.id,
           title: input.title || null,
           description: input.description || null,
+          moderationStatus: "pending",
         });
+
+        let pendingReview = false;
 
         try {
           const photoRecords = await Promise.all(
@@ -70,27 +85,74 @@ export const appRouter = router({
               const fileKey = `cards/${cardId}/photo-${index}-${randomSuffix}.${extension}`;
               const buffer = Buffer.from(photo.base64, "base64");
               const { url } = await storagePut(fileKey, buffer, photo.mimeType);
-              return { cardId, url, photoIndex: index };
+              return { cardId, url, photoIndex: index, moderationStatus: "pending" as const };
             }),
           );
 
           await db.createPhotos(photoRecords);
+          const createdPhotos = await db.getPhotosByCardId(cardId, { includeUnapproved: true });
+
+          const textChecks: Array<{ pass: boolean; message?: string; result?: string }> = [];
+          if (input.title?.trim()) {
+            const mod = await moderateText(input.title.trim(), "comment_detection");
+            textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
+          }
+          if (input.description?.trim()) {
+            const mod = await moderateText(input.description.trim(), "comment_detection");
+            textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
+          }
+          const textFail = textChecks.find((c) => !c.pass);
+          const textPass = !textFail;
+
+          const imageMod = await moderateImages(photoRecords.map((p) => p.url));
+          const imagePass = imageMod.pass;
+
+          const overallPass = textPass && imagePass;
+          const cardStatus = overallPass ? "approved" : "pending";
+          await db.updateCardModerationStatus(cardId, cardStatus);
+          pendingReview = !overallPass;
+
+          if (overallPass) {
+            for (const p of createdPhotos) {
+              await db.updatePhotoModerationStatus(p.id, "approved");
+            }
+          }
+
+          await db.createModerationRecord({
+            targetType: "card",
+            targetId: cardId,
+            status: cardStatus,
+            autoResult: (overallPass ? "pass" : (textFail?.result ?? "block")) as "pass" | "review" | "block",
+            autoMessage: overallPass ? null : (textFail?.message ?? imageMod.message ?? "Card needs review"),
+          });
+
+          for (const p of createdPhotos) {
+            await db.createModerationRecord({
+              targetType: "photo",
+              targetId: p.id,
+              status: cardStatus,
+              autoResult: imagePass ? "pass" : "block",
+              autoMessage: imagePass ? null : (imageMod.message ?? "Photo needs review"),
+            });
+          }
         } catch (err) {
           // Rollback: delete the card if photo upload or save fails
           await db.deleteCard(cardId, ctx.user.id);
           throw err;
         }
 
-        return { cardId };
+        return { cardId, pendingReview };
       }),
 
     // Get card by ID with photos
     getById: publicProcedure
       .input(z.object({ cardId: z.number() }))
-      .query(async ({ input }) => {
-        const card = await db.getCardById(input.cardId);
+      .query(async ({ input, ctx }) => {
+        const card = await db.getCardById(input.cardId, { includeUnapproved: true });
         if (!card) return null;
-        const photos = await db.getPhotosByCardId(input.cardId);
+        const isOwner = !!ctx.user && card.userId === ctx.user.id;
+        if (card.moderationStatus !== "approved" && !isOwner) return null;
+        const photos = await db.getPhotosByCardId(input.cardId, { includeUnapproved: isOwner });
         return { ...card, photos };
       }),
 
@@ -100,7 +162,7 @@ export const appRouter = router({
         const cards = await db.getCardsByUserId(ctx.user.id);
         const cardsWithPhotos = await Promise.all(
           cards.map(async (card) => {
-            const photos = await db.getPhotosByCardId(card.id);
+            const photos = await db.getPhotosByCardId(card.id, { includeUnapproved: true });
             return { ...card, photos };
           })
         );
@@ -133,7 +195,31 @@ export const appRouter = router({
         if (!updated) {
           throw new Error("无法修改该卡片（仅可修改自己的上传）");
         }
-        return { success: true };
+        const textChecks: Array<{ pass: boolean; message?: string; result?: string }> = [];
+        if (typeof input.title === "string" && input.title.trim()) {
+          const mod = await moderateText(input.title.trim(), "comment_detection");
+          textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
+        }
+        if (typeof input.description === "string" && input.description.trim()) {
+          const mod = await moderateText(input.description.trim(), "comment_detection");
+          textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
+        }
+        const textFail = textChecks.find((c) => !c.pass);
+        const textPass = !textFail;
+
+        const photos = await db.getPhotosByCardId(input.cardId, { includeUnapproved: true });
+        const photosAllApproved = photos.every((p) => p.moderationStatus === "approved");
+        const cardStatus = textPass && photosAllApproved ? "approved" : "pending";
+        await db.updateCardModerationStatus(input.cardId, cardStatus);
+
+        await db.createModerationRecord({
+          targetType: "card",
+          targetId: input.cardId,
+          status: cardStatus,
+          autoResult: (textPass ? "pass" : (textFail?.result ?? "block")) as "pass" | "review" | "block",
+          autoMessage: textPass ? null : (textFail?.message ?? "Card needs review"),
+        });
+        return { success: true, pendingReview: cardStatus !== "approved" };
       }),
 
     // Get a random card to vote on
@@ -361,6 +447,17 @@ export const appRouter = router({
             throw new Error("Invalid reply target");
           }
         }
+        let textPass = true;
+        let textFail: { message?: string; result?: string } | null = null;
+        if (input.content.trim()) {
+          const mod = await moderateText(input.content.trim(), "comment_detection");
+          textPass = mod.pass;
+          if (!mod.pass) textFail = { message: mod.message, result: mod.result };
+        }
+        const imageMod = input.imageUrls?.length ? await moderateImages(input.imageUrls) : { pass: true as const };
+        const imagePass = imageMod.pass;
+        const overallPass = textPass && imagePass;
+        const commentStatus = overallPass ? "approved" : "pending";
         const commentId = await db.createComment({
           cardId: input.cardId,
           userId: ctx.user.id,
@@ -368,8 +465,16 @@ export const appRouter = router({
           parentId: input.parentId ?? undefined,
           replyToUserId: input.replyToUserId ?? undefined,
           ...(input.imageUrls?.length ? { images: input.imageUrls } : {}),
+          moderationStatus: commentStatus,
         });
-        return { commentId };
+        await db.createModerationRecord({
+          targetType: "comment",
+          targetId: commentId,
+          status: commentStatus,
+          autoResult: (overallPass ? "pass" : (textFail?.result ?? "block")) as "pass" | "review" | "block",
+          autoMessage: overallPass ? null : (textFail?.message ?? imageMod.message ?? "Comment needs review"),
+        });
+        return { commentId, pendingReview: !overallPass };
       }),
 
     // Get comments count

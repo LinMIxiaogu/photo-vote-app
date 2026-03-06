@@ -7,6 +7,8 @@ CREATE TABLE `users` (
 	`passwordHash` varchar(255),
 	`hermitUserUUID` varchar(64),
 	`avatarUrl` varchar(512),
+	`nameModerationStatus` enum('approved','pending','rejected') NOT NULL DEFAULT 'approved',
+	`avatarModerationStatus` enum('approved','pending','rejected') NOT NULL DEFAULT 'approved',
 	`loginMethod` varchar(64),
 	`role` enum('user','admin') NOT NULL DEFAULT 'user',
 	`createdAt` timestamp NOT NULL DEFAULT (now()),
@@ -22,6 +24,7 @@ CREATE TABLE `cards` (
 	`userId` int,
 	`title` varchar(14),
 	`description` text,
+	`moderationStatus` enum('approved','pending','rejected') NOT NULL DEFAULT 'approved',
 	`totalVotes` int NOT NULL DEFAULT 0,
 	`isCompleted` boolean NOT NULL DEFAULT false,
 	`createdAt` timestamp NOT NULL DEFAULT (now()),
@@ -34,6 +37,7 @@ CREATE TABLE `photos` (
 	`cardId` int NOT NULL,
 	`url` varchar(512) NOT NULL,
 	`photoIndex` int NOT NULL,
+	`moderationStatus` enum('approved','pending','rejected') NOT NULL DEFAULT 'approved',
 	`voteCount` int NOT NULL DEFAULT 0,
 	`createdAt` timestamp NOT NULL DEFAULT (now()),
 	CONSTRAINT `photos_id` PRIMARY KEY(`id`)
@@ -57,6 +61,7 @@ CREATE TABLE `comments` (
 	`replyToUserId` int,
 	`content` text NOT NULL,
 	`images` json,
+	`moderationStatus` enum('approved','pending','rejected') NOT NULL DEFAULT 'approved',
 	`createdAt` timestamp NOT NULL DEFAULT (now()),
 	CONSTRAINT `comments_id` PRIMARY KEY(`id`)
 );
@@ -80,4 +85,18 @@ CREATE TABLE `feedbacks` (
 	`screenshot` longtext,
 	`createdAt` timestamp NOT NULL DEFAULT (now()),
 	CONSTRAINT `feedbacks_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `moderation_records` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`targetType` enum('card','photo','comment','user_name','user_avatar') NOT NULL,
+	`targetId` int NOT NULL,
+	`status` enum('approved','pending','rejected') NOT NULL,
+	`autoResult` enum('pass','review','block'),
+	`autoMessage` text,
+	`manualReason` text,
+	`moderatorUserId` int,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `moderation_records_id` PRIMARY KEY(`id`)
 );

@@ -392,10 +392,13 @@ export default function MeScreen() {
     setPendingAsset(null);
     setUploadingAvatar(true);
     try {
-      const { avatarUrl } = await updateAvatarMutation.mutateAsync({ base64, mimeType });
-      const updatedUser: Auth.User = { ...user, avatarUrl };
+      const { avatarUrl, pendingReview } = await updateAvatarMutation.mutateAsync({ base64, mimeType });
+      const updatedUser: Auth.User = { ...user, avatarUrl, avatarModerationStatus: pendingReview ? "pending" : "approved" };
       await Auth.setUserInfo(updatedUser);
       await refresh();
+      if (pendingReview) {
+        Alert.alert("提示", "头像已提交审核，审核通过后将对外展示");
+      }
     } catch (e: any) {
       Alert.alert("上传失败", e?.message ?? "头像更换失败，请重试");
     } finally {
@@ -544,6 +547,11 @@ export default function MeScreen() {
               {displayName(user)}
             </Text>
             <Text style={[styles.profileSub, { color: colors.muted }]}>同步收藏与发布记录</Text>
+            {(user.avatarModerationStatus && user.avatarModerationStatus !== "approved") || (user.nameModerationStatus && user.nameModerationStatus !== "approved") ? (
+              <Text style={[styles.profileSub, { color: user.avatarModerationStatus === "rejected" || user.nameModerationStatus === "rejected" ? "#EF4444" : colors.tint }]}>
+                {user.avatarModerationStatus === "pending" || user.nameModerationStatus === "pending" ? "内容审核中" : "内容未通过审核"}
+              </Text>
+            ) : null}
           </View>
         </View>
 

@@ -9,6 +9,8 @@ export type User = {
   email: string | null;
   phone: string | null;
   avatarUrl: string | null;
+  nameModerationStatus?: "approved" | "pending" | "rejected";
+  avatarModerationStatus?: "approved" | "pending" | "rejected";
   loginMethod: string | null;
   lastSignedIn: Date;
 };

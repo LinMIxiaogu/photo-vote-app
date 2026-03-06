@@ -38,6 +38,10 @@ export default function EditCopyScreen() {
     onSuccess: (data) => {
       if (Platform.OS === "web") clearTempPhotos();
       else AsyncStorage.removeItem(TEMP_PHOTOS_KEY).catch(console.error);
+      if (data?.pendingReview) {
+        if (Platform.OS === "web") window.alert("内容已提交审核，审核通过后将对外展示");
+        else Alert.alert("提示", "内容已提交审核，审核通过后将对外展示");
+      }
       router.replace(`/waiting?cardId=${data.cardId}`);
     },
     onError: (error) => {

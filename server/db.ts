@@ -1,9 +1,10 @@
-import { eq, and, or, sql, desc, notInArray, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, sql, desc, notInArray, isNull, inArray, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, cards, photos, votes, comments, favorites, feedbacks, InsertCard, InsertPhoto, InsertVote, InsertComment, InsertFavorite, InsertFeedback, Card, Photo, Comment } from "../drizzle/schema";
+import { InsertUser, users, cards, photos, votes, comments, favorites, feedbacks, moderationRecords, InsertCard, InsertPhoto, InsertVote, InsertComment, InsertFavorite, InsertFeedback, InsertModerationRecord, Card, Photo, Comment, ModerationRecord } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+const MODERATION_PENDING_TIMEOUT_MS = 10 * 60 * 1000;
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
@@ -60,6 +61,15 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet.role = "admin";
     }
 
+    if (user.nameModerationStatus !== undefined) {
+      values.nameModerationStatus = user.nameModerationStatus;
+      updateSet.nameModerationStatus = user.nameModerationStatus;
+    }
+    if (user.avatarModerationStatus !== undefined) {
+      values.avatarModerationStatus = user.avatarModerationStatus;
+      updateSet.avatarModerationStatus = user.avatarModerationStatus;
+    }
+
     if (!values.lastSignedIn) {
       values.lastSignedIn = new Date();
     }
@@ -84,6 +94,8 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
+  await expireTimedOutPendingModeration();
+
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
 
   return result.length > 0 ? result[0] : undefined;
@@ -99,6 +111,7 @@ export async function getUserByPhone(phone: string) {
 export async function getUserById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
+  await expireTimedOutPendingModeration();
   const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
@@ -143,6 +156,18 @@ export async function updateUserAvatar(userId: number, avatarUrl: string): Promi
   await db.update(users).set({ avatarUrl }).where(eq(users.id, userId));
 }
 
+export async function updateUserAvatarModerationStatus(userId: number, status: "approved" | "pending" | "rejected"): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(users).set({ avatarModerationStatus: status }).where(eq(users.id, userId));
+}
+
+export async function updateUserNameModerationStatus(userId: number, status: "approved" | "pending" | "rejected"): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(users).set({ nameModerationStatus: status }).where(eq(users.id, userId));
+}
+
 // ==================== Card Operations ====================
 
 export async function createCard(data: InsertCard): Promise<number> {
@@ -153,17 +178,27 @@ export async function createCard(data: InsertCard): Promise<number> {
   return Number(result[0].insertId);
 }
 
-export async function getCardById(cardId: number): Promise<Card | undefined> {
+export async function getCardById(
+  cardId: number,
+  options?: { includeUnapproved?: boolean }
+): Promise<Card | undefined> {
   const db = await getDb();
   if (!db) return undefined;
-  
-  const result = await db.select().from(cards).where(eq(cards.id, cardId)).limit(1);
+
+  await expireTimedOutPendingModeration();
+
+  const whereClause = options?.includeUnapproved
+    ? eq(cards.id, cardId)
+    : and(eq(cards.id, cardId), eq(cards.moderationStatus, "approved"));
+
+  const result = await db.select().from(cards).where(whereClause).limit(1);
   return result[0];
 }
 
 export async function getCardsByUserId(userId: number): Promise<Card[]> {
   const db = await getDb();
   if (!db) return [];
+  await expireTimedOutPendingModeration();
   
   return db.select().from(cards).where(eq(cards.userId, userId)).orderBy(desc(cards.createdAt));
 }
@@ -173,6 +208,12 @@ export async function updateCardVotes(cardId: number, totalVotes: number, isComp
   if (!db) throw new Error("Database not available");
   
   await db.update(cards).set({ totalVotes, isCompleted }).where(eq(cards.id, cardId));
+}
+
+export async function updateCardModerationStatus(cardId: number, status: "approved" | "pending" | "rejected"): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(cards).set({ moderationStatus: status }).where(eq(cards.id, cardId));
 }
 
 /** Delete a user account and all their associated data. */
@@ -195,6 +236,7 @@ export async function deleteUser(userId: number): Promise<void> {
   await db.delete(comments).where(eq(comments.userId, userId));
   await db.delete(favorites).where(eq(favorites.userId, userId));
   await db.delete(feedbacks).where(eq(feedbacks.userId, userId));
+  await db.delete(moderationRecords).where(eq(moderationRecords.moderatorUserId, userId));
 
   await db.delete(users).where(eq(users.id, userId));
 }
@@ -240,15 +282,38 @@ export async function createPhotos(data: InsertPhoto[]): Promise<void> {
   await db.insert(photos).values(data);
 }
 
-export async function getPhotosByCardId(cardId: number): Promise<Photo[]> {
+export async function getPhotosByCardId(
+  cardId: number,
+  options?: { includeUnapproved?: boolean }
+): Promise<Photo[]> {
   const db = await getDb();
   if (!db) return [];
+
+  await expireTimedOutPendingModeration();
+
+  const whereClause = options?.includeUnapproved
+    ? eq(photos.cardId, cardId)
+    : and(eq(photos.cardId, cardId), eq(photos.moderationStatus, "approved"));
 
   return db
     .select()
     .from(photos)
-    .where(eq(photos.cardId, cardId))
+    .where(whereClause)
     .orderBy(photos.photoIndex);
+}
+
+export async function updatePhotoModerationStatus(photoId: number, status: "approved" | "pending" | "rejected"): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(photos).set({ moderationStatus: status }).where(eq(photos.id, photoId));
+}
+
+export async function getPhotoById(photoId: number): Promise<Photo | null> {
+  const db = await getDb();
+  if (!db) return null;
+  await expireTimedOutPendingModeration();
+  const result = await db.select().from(photos).where(eq(photos.id, photoId)).limit(1);
+  return result[0] ?? null;
 }
 
 export async function incrementPhotoVoteCount(photoId: number): Promise<void> {
@@ -295,7 +360,9 @@ export async function getRandomAvailableCard(userId?: number): Promise<Card | un
   const db = await getDb();
   if (!db) return undefined;
 
-  const conditions = userId != null ? [eq(cards.isCompleted, false)] : [];
+  await expireTimedOutPendingModeration();
+
+  const conditions = userId != null ? [eq(cards.isCompleted, false), eq(cards.moderationStatus, "approved")] : [eq(cards.moderationStatus, "approved")];
 
   if (userId != null) {
     const votedRows = await db.select({ cardId: votes.cardId }).from(votes).where(eq(votes.userId, userId));
@@ -326,10 +393,13 @@ export async function getRandomAvailableCards(
   const db = await getDb();
   if (!db) return [];
 
-  const result = await (excludeCardIds.length > 0
-    ? db.select().from(cards).where(notInArray(cards.id, excludeCardIds))
-    : db.select().from(cards)
-  )
+  await expireTimedOutPendingModeration();
+
+  const baseWhere = excludeCardIds.length > 0
+    ? and(notInArray(cards.id, excludeCardIds), eq(cards.moderationStatus, "approved"))
+    : eq(cards.moderationStatus, "approved");
+
+  const result = await db.select().from(cards).where(baseWhere)
     .orderBy(sql`RAND()`)
     .limit(limit);
 
@@ -357,13 +427,21 @@ export async function createComment(data: InsertComment): Promise<number> {
   return Number(result[0].insertId);
 }
 
+export async function updateCommentModerationStatus(commentId: number, status: "approved" | "pending" | "rejected"): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(comments).set({ moderationStatus: status }).where(eq(comments.id, commentId));
+}
+
 /** 主评论列表（仅 parentId 为 null），按热度（回复数）+ 时间排序 */
 export async function getTopLevelCommentsByCardId(cardId: number): Promise<(Comment & { replyCount: number; userName: string; userAvatarUrl: string | null })[]> {
   const db = await getDb();
   if (!db) return [];
 
+  await expireTimedOutPendingModeration();
+
   const topLevel = await db.select().from(comments)
-    .where(and(eq(comments.cardId, cardId), isNull(comments.parentId)))
+    .where(and(eq(comments.cardId, cardId), isNull(comments.parentId), eq(comments.moderationStatus, "approved")))
     .orderBy(desc(comments.createdAt));
 
   if (topLevel.length === 0) return [];
@@ -396,17 +474,26 @@ export async function getTopLevelCommentsByCardId(cardId: number): Promise<(Comm
 
   // Batch-fetch user info for display names and avatars
   const userIds = [...new Set(withCount.filter((c) => c.userId != null).map((c) => c.userId as number))];
-  const userMap = new Map<number, { name: string | null; phone: string | null; avatarUrl: string | null }>();
+  const userMap = new Map<number, { name: string | null; phone: string | null; avatarUrl: string | null; nameModerationStatus: string; avatarModerationStatus: string }>();
   if (userIds.length > 0) {
-    const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone, avatarUrl: users.avatarUrl })
+    const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone, avatarUrl: users.avatarUrl, nameModerationStatus: users.nameModerationStatus, avatarModerationStatus: users.avatarModerationStatus })
       .from(users).where(inArray(users.id, userIds));
-    userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone, avatarUrl: u.avatarUrl ?? null }));
+    userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone, avatarUrl: u.avatarUrl ?? null, nameModerationStatus: u.nameModerationStatus, avatarModerationStatus: u.avatarModerationStatus }));
   }
 
   return withCount.map((c) => ({
     ...c,
-    userName: buildUserName(c.userId != null ? userMap.get(c.userId) : null),
-    userAvatarUrl: c.userId != null ? (userMap.get(c.userId)?.avatarUrl ?? null) : null,
+    userName: buildUserName(c.userId != null ? (() => {
+      const u = userMap.get(c.userId);
+      if (!u) return null;
+      if (u.nameModerationStatus !== "approved") return { name: null, phone: u.phone };
+      return { name: u.name, phone: u.phone };
+    })() : null),
+    userAvatarUrl: c.userId != null ? (() => {
+      const u = userMap.get(c.userId);
+      if (!u || u.avatarModerationStatus !== "approved") return null;
+      return u.avatarUrl ?? null;
+    })() : null,
   }));
 }
 
@@ -415,8 +502,10 @@ export async function getRepliesByParentId(parentId: number): Promise<(Comment &
   const db = await getDb();
   if (!db) return [];
 
+  await expireTimedOutPendingModeration();
+
   const replies = await db.select().from(comments)
-    .where(eq(comments.parentId, parentId))
+    .where(and(eq(comments.parentId, parentId), eq(comments.moderationStatus, "approved")))
     .orderBy(comments.createdAt);
 
   if (replies.length === 0) return [];
@@ -440,25 +529,40 @@ export async function getRepliesByParentId(parentId: number): Promise<(Comment &
   const replyToIds = [...new Set(replies.filter((c) => c.replyToUserId != null).map((c) => c.replyToUserId as number))];
   const allUserIds = [...new Set([...commenterIds, ...replyToIds])];
 
-  const userMap = new Map<number, { name: string | null; phone: string | null; avatarUrl: string | null }>();
+  const userMap = new Map<number, { name: string | null; phone: string | null; avatarUrl: string | null; nameModerationStatus: string; avatarModerationStatus: string }>();
   if (allUserIds.length > 0) {
-    const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone, avatarUrl: users.avatarUrl })
+    const userRows = await db.select({ id: users.id, name: users.name, phone: users.phone, avatarUrl: users.avatarUrl, nameModerationStatus: users.nameModerationStatus, avatarModerationStatus: users.avatarModerationStatus })
       .from(users).where(inArray(users.id, allUserIds));
-    userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone, avatarUrl: u.avatarUrl ?? null }));
+    userRows.forEach((u) => userMap.set(u.id, { name: u.name, phone: u.phone, avatarUrl: u.avatarUrl ?? null, nameModerationStatus: u.nameModerationStatus, avatarModerationStatus: u.avatarModerationStatus }));
   }
 
   return replies.map((c) => ({
     ...c,
     replyCount: countMap.get(c.id) ?? 0,
-    userName: buildUserName(c.userId != null ? userMap.get(c.userId) : null),
-    userAvatarUrl: c.userId != null ? (userMap.get(c.userId)?.avatarUrl ?? null) : null,
-    replyToUserName: c.replyToUserId != null ? buildUserName(userMap.get(c.replyToUserId)) : null,
+    userName: buildUserName(c.userId != null ? (() => {
+      const u = userMap.get(c.userId);
+      if (!u) return null;
+      if (u.nameModerationStatus !== "approved") return { name: null, phone: u.phone };
+      return { name: u.name, phone: u.phone };
+    })() : null),
+    userAvatarUrl: c.userId != null ? (() => {
+      const u = userMap.get(c.userId);
+      if (!u || u.avatarModerationStatus !== "approved") return null;
+      return u.avatarUrl ?? null;
+    })() : null,
+    replyToUserName: c.replyToUserId != null ? buildUserName((() => {
+      const u = userMap.get(c.replyToUserId);
+      if (!u) return null;
+      if (u.nameModerationStatus !== "approved") return { name: null, phone: u.phone };
+      return { name: u.name, phone: u.phone };
+    })()) : null,
   }));
 }
 
 export async function getCommentById(id: number): Promise<Comment | null> {
   const db = await getDb();
   if (!db) return null;
+  await expireTimedOutPendingModeration();
   const result = await db.select().from(comments).where(eq(comments.id, id)).limit(1);
   return result[0] ?? null;
 }
@@ -468,18 +572,22 @@ export async function getCommentsByCardId(cardId: number): Promise<Comment[]> {
   const db = await getDb();
   if (!db) return [];
 
+  await expireTimedOutPendingModeration();
+
   return db.select().from(comments)
-    .where(eq(comments.cardId, cardId))
+    .where(and(eq(comments.cardId, cardId), eq(comments.moderationStatus, "approved")))
     .orderBy(desc(comments.createdAt));
 }
 
 export async function getCommentsCount(cardId: number): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
+
+  await expireTimedOutPendingModeration();
   
   const result = await db.select({ count: sql<number>`count(*)` })
     .from(comments)
-    .where(eq(comments.cardId, cardId));
+    .where(and(eq(comments.cardId, cardId), eq(comments.moderationStatus, "approved")));
   
   return result[0]?.count ?? 0;
 }
@@ -541,4 +649,108 @@ export async function createFeedback(data: InsertFeedback): Promise<number> {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(feedbacks).values(data);
   return Number(result[0].insertId);
+}
+
+// ==================== Moderation Records ====================
+
+export async function createModerationRecord(data: InsertModerationRecord): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(moderationRecords).values(data);
+  return Number(result[0].insertId);
+}
+
+export async function getModerationRecordById(id: number): Promise<ModerationRecord | null> {
+  const db = await getDb();
+  if (!db) return null;
+  await expireTimedOutPendingModeration();
+  const result = await db.select().from(moderationRecords).where(eq(moderationRecords.id, id)).limit(1);
+  return result[0] ?? null;
+}
+
+export async function listModerationRecords(
+  status: "approved" | "pending" | "rejected" | undefined,
+  limit: number = 50,
+  offset: number = 0,
+  options?: { targetTypes?: Array<"card" | "photo" | "comment" | "user_name" | "user_avatar">; startAt?: Date; endAt?: Date }
+): Promise<ModerationRecord[]> {
+  const db = await getDb();
+  if (!db) return [];
+  await expireTimedOutPendingModeration();
+  const conditions = [] as any[];
+  if (status) {
+    conditions.push(eq(moderationRecords.status, status));
+  }
+  if (options?.targetTypes?.length) {
+    conditions.push(inArray(moderationRecords.targetType, options.targetTypes));
+  }
+  if (options?.startAt) {
+    conditions.push(gte(moderationRecords.createdAt, options.startAt));
+  }
+  if (options?.endAt) {
+    conditions.push(lte(moderationRecords.createdAt, options.endAt));
+  }
+  return db.select().from(moderationRecords)
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(desc(moderationRecords.createdAt))
+    .limit(limit)
+    .offset(offset);
+}
+
+export async function updateModerationRecordDecision(
+  recordId: number,
+  status: "approved" | "rejected",
+  moderatorUserId: number,
+  manualReason?: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(moderationRecords)
+    .set({ status, moderatorUserId, manualReason: manualReason ?? null })
+    .where(eq(moderationRecords.id, recordId));
+}
+
+async function expireTimedOutPendingModeration(): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+
+  const cutoff = new Date(Date.now() - MODERATION_PENDING_TIMEOUT_MS);
+  const expired = await db.select().from(moderationRecords)
+    .where(and(eq(moderationRecords.status, "pending"), lte(moderationRecords.createdAt, cutoff)));
+
+  if (expired.length === 0) return;
+
+  for (const record of expired) {
+    await db.update(moderationRecords)
+      .set({ status: "rejected", manualReason: record.manualReason ?? "SDK 审核未通过，超过 10 分钟自动拒绝" })
+      .where(eq(moderationRecords.id, record.id));
+
+    if (record.targetType === "card") {
+      await db.update(cards).set({ moderationStatus: "rejected" }).where(eq(cards.id, record.targetId));
+      continue;
+    }
+
+    if (record.targetType === "photo") {
+      const photo = await db.select().from(photos).where(eq(photos.id, record.targetId)).limit(1);
+      if (photo[0]) {
+        await db.update(photos).set({ moderationStatus: "rejected" }).where(eq(photos.id, record.targetId));
+        await db.update(cards).set({ moderationStatus: "rejected" }).where(eq(cards.id, photo[0].cardId));
+      }
+      continue;
+    }
+
+    if (record.targetType === "comment") {
+      await db.update(comments).set({ moderationStatus: "rejected" }).where(eq(comments.id, record.targetId));
+      continue;
+    }
+
+    if (record.targetType === "user_name") {
+      await db.update(users).set({ nameModerationStatus: "rejected" }).where(eq(users.id, record.targetId));
+      continue;
+    }
+
+    if (record.targetType === "user_avatar") {
+      await db.update(users).set({ avatarModerationStatus: "rejected" }).where(eq(users.id, record.targetId));
+    }
+  }
 }

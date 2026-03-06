@@ -200,8 +200,8 @@ class SDKServer {
 
       return {
         openId,
-        appId,
-        name,
+        appId: isNonEmptyString(appId) ? appId : ENV.appId,
+        name: isNonEmptyString(name) ? name : undefined,
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
