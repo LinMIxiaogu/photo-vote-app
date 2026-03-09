@@ -84,12 +84,6 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     [
-      "expo-audio",
-      {
-        microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone.",
-      },
-    ],
-    [
       "expo-video",
       {
         supportsPictureInPicture: true,
