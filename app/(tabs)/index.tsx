@@ -24,6 +24,7 @@ import { Gesture, GestureDetector, GestureHandlerRootView, ScrollView as GHScrol
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SwipeGuideModal } from "@/components/SwipeGuideModal";
+import { VoteCardStack } from "@/components/vote-card-stack";
 
 const shareIcon = require("@/assets/images/share-icon.png");
 
@@ -58,8 +59,11 @@ export default function ImageTestScreen() {
   const [currentCard, setCurrentCard] = useState<VoteCardData | null>(null);
   const [cardQueue, setCardQueue] = useState<VoteCardData[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
+  const [enableNextCardPreview, setEnableNextCardPreview] = useState(true);
+  const [transitionPreviewCard, setTransitionPreviewCard] = useState<VoteCardData | null>(null);
   /** 本次会话所有已入队的卡片 ID，用于服务端排重 */
   const sessionQueueIdsRef = useRef<number[]>([]);
+  const prefetchedImageUrlsRef = useRef<Set<string>>(new Set());
   const isRefillInProgress = useRef(false);
   const [previousCards, setPreviousCards] = useState<VoteCardData[]>([]);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -93,6 +97,7 @@ export default function ImageTestScreen() {
 
   const translateY = useSharedValue(0);
   const cardOpacity = useSharedValue(1);
+  const showNextCard = useSharedValue(false);
 
   // Toast notification
   const [toastMessage, setToastMessage] = useState("");
@@ -217,6 +222,29 @@ export default function ImageTestScreen() {
     if (currentCard || cardQueue.length > 0 || isTransitioning) return;
     performRefill(true);
   }, [currentCard, cardQueue.length, isTransitioning, performRefill]);
+
+  const prefetchUpcomingCardImages = useCallback(async (cards: VoteCardData[]) => {
+    const urls = cards
+      .flatMap((card) => card.photos)
+      .map((photo) => getImageUrl(photo.url))
+      .filter((url) => !!url && !prefetchedImageUrlsRef.current.has(url));
+
+    if (urls.length === 0) return;
+
+    urls.forEach((url) => prefetchedImageUrlsRef.current.add(url));
+
+    try {
+      await Image.prefetch(urls);
+    } catch (error) {
+      console.warn("[vote-flow] image prefetch failed", error);
+      urls.forEach((url) => prefetchedImageUrlsRef.current.delete(url));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (cardQueue.length === 0) return;
+    prefetchUpcomingCardImages(cardQueue.slice(0, 3));
+  }, [cardQueue, prefetchUpcomingCardImages]);
 
   const submitVoteMutation = trpc.votes.submit.useMutation({
     onSuccess: (data, variables) => {
@@ -508,6 +536,9 @@ export default function ImageTestScreen() {
   );
 
   const resetAndFetchNext = useCallback(() => {
+    const promotedCard = cardQueue[0] ?? null;
+    setEnableNextCardPreview(false);
+    setTransitionPreviewCard(promotedCard);
     setShowResult(false);
     setVoteResult(null);
     setUserVotedAt(null);
@@ -519,7 +550,6 @@ export default function ImageTestScreen() {
     setCommentImageUrls([]);
     setIsFavorited(false);
     setExpandedPhotoIndex(null);
-    translateY.value = 0;
     cardOpacity.value = 1;
 
     if (currentCard) {
@@ -539,12 +569,23 @@ export default function ImageTestScreen() {
       setCurrentCard(null);
     }
 
+    requestAnimationFrame(() => {
+      translateY.value = 0;
+      requestAnimationFrame(() => {
+        showNextCard.value = false;
+        setTransitionPreviewCard(null);
+      });
+    });
+
     setTimeout(() => {
+      setEnableNextCardPreview(true);
       setIsTransitioning(false);
-    }, 50);
-  }, [currentCard, cardQueue, performRefill, translateY, cardOpacity]);
+    }, 80);
+  }, [cardQueue, currentCard, performRefill, showNextCard, translateY, cardOpacity]);
 
   const resetAndShowPrevious = useCallback(() => {
+    setEnableNextCardPreview(false);
+    setTransitionPreviewCard(null);
     setShowResult(false);
     setVoteResult(null);
     setUserVotedAt(null);
@@ -554,8 +595,8 @@ export default function ImageTestScreen() {
     setCommentText("");
     setIsFavorited(false);
     setExpandedPhotoIndex(null);
-    translateY.value = 0;
     cardOpacity.value = 1;
+    showNextCard.value = false;
 
     setPreviousCards((prev) => {
       if (prev.length === 0) return prev;
@@ -566,28 +607,29 @@ export default function ImageTestScreen() {
       return newPrev;
     });
 
+    requestAnimationFrame(() => {
+      translateY.value = 0;
+    });
+
     setTimeout(() => {
+      setEnableNextCardPreview(true);
       setIsTransitioning(false);
-    }, 50);
-  }, [currentCard, translateY, cardOpacity]);
+    }, 80);
+  }, [currentCard, showNextCard, translateY, cardOpacity]);
 
   const goToNextCard = useCallback(() => {
     if (showSwipeGuide) {
       handleSwipeGuideDismiss();
     }
     setIsTransitioning(true);
-    cardOpacity.value = withTiming(0, { duration: 150 }, () => {
-      runOnJS(resetAndFetchNext)();
-    });
-  }, [resetAndFetchNext, cardOpacity, showSwipeGuide, handleSwipeGuideDismiss]);
+    resetAndFetchNext();
+  }, [resetAndFetchNext, showSwipeGuide, handleSwipeGuideDismiss]);
 
   const goToPreviousCard = useCallback(() => {
     if (previousCards.length === 0 || isTransitioning) return;
     setIsTransitioning(true);
-    cardOpacity.value = withTiming(0, { duration: 150 }, () => {
-      runOnJS(resetAndShowPrevious)();
-    });
-  }, [previousCards.length, isTransitioning, resetAndShowPrevious, cardOpacity]);
+    resetAndShowPrevious();
+  }, [previousCards.length, isTransitioning, resetAndShowPrevious]);
 
   const canGoBack = previousCards.length > 0;
   const showEmpty =
@@ -598,6 +640,9 @@ export default function ImageTestScreen() {
   const showLoading = !currentCard && (queueLoading || isTransitioning);
   const canSwipePrev = canGoBack;
   const canSwipeNext = !!currentCard && !(showResult && showComments);
+  const nextCard = !showResult
+    ? (transitionPreviewCard ?? (enableNextCardPreview ? cardQueue[0] ?? null : null))
+    : null;
   const totalCount = previousCards.length + (currentCard ? 1 : 0) + cardQueue.length;
   const currentIndex = currentCard ? previousCards.length + 1 : 0;
   const progressPct = totalCount > 0 ? Math.min(100, Math.round((currentIndex / totalCount) * 100)) : 0;
@@ -614,25 +659,29 @@ export default function ImageTestScreen() {
             (isPrevDirection && canSwipePrev) ||
             (isNextDirection && canSwipeNext);
           // 禁止方向直接锁死，避免出现“可拉动但过不去”
+          showNextCard.value = allowMove && isNextDirection;
           translateY.value = allowMove ? dragY : 0;
         })
         .onEnd((event) => {
           const toNext = event.translationY <= -SWIPE_THRESHOLD && canSwipeNext;
           const toPrev = event.translationY >= SWIPE_THRESHOLD && canSwipePrev;
           if (toPrev) {
+            showNextCard.value = false;
             translateY.value = withTiming(SCREEN_HEIGHT, { duration: 200 }, () => {
               runOnJS(goToPreviousCard)();
             });
           } else if (toNext) {
+            showNextCard.value = true;
             translateY.value = withTiming(-SCREEN_HEIGHT, { duration: 200 }, () => {
               runOnJS(goToNextCard)();
             });
           } else {
+            showNextCard.value = false;
             translateY.value = 0;
           }
         })
         .runOnJS(true),
-    [canSwipePrev, canSwipeNext, goToNextCard, goToPreviousCard, translateY]
+    [canSwipePrev, canSwipeNext, goToNextCard, goToPreviousCard, showNextCard, translateY]
   );
 
   const animatedCardStyle = useAnimatedStyle(() => ({
@@ -643,7 +692,7 @@ export default function ImageTestScreen() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <GestureDetector gesture={swipeGesture}>
-        <Animated.View ref={cardCaptureRef} style={[styles.fullScreen, animatedCardStyle]}>
+        <Animated.View ref={cardCaptureRef} style={styles.fullScreen}>
           <View style={styles.background} />
 
           <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
@@ -683,6 +732,15 @@ export default function ImageTestScreen() {
           ) : (
             <View style={styles.content}>
               {!showResult ? (
+                <VoteCardStack
+                  currentCard={currentCard!}
+                  nextCard={nextCard}
+                  selectedPhotoId={selectedPhotoId}
+                  onPhotoPress={handlePhotoPress}
+                  translateY={translateY}
+                  showNextCard={showNextCard}
+                />
+              ) : !showResult ? (
                 <>
                   {(() => {
                     const t = currentCard?.title || "选择你喜欢的";
