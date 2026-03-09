@@ -1,10 +1,11 @@
-import { memo } from "react";
-import { View, Text, StyleSheet, Pressable, Dimensions } from "react-native";
+import { memo, useRef } from "react";
+import { View, Text, StyleSheet, Pressable, Dimensions, type GestureResponderEvent } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import { Image } from "expo-image";
 import { getImageUrl } from "@/lib/utils";
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
+const TAP_MOVE_TOLERANCE = 12;
 
 type VotePhoto = {
   id: number;
@@ -87,11 +88,42 @@ function VoteCardContent({
 }: VoteCardContentProps) {
   const title = card.title || "选择你喜欢的";
   const count = card.photos.length;
+  const pressStateRef = useRef<Record<number, { startX: number; startY: number; moved: boolean }>>({});
+
+  const beginPress = (photoId: number, event: GestureResponderEvent) => {
+    const { pageX, pageY } = event.nativeEvent;
+    pressStateRef.current[photoId] = { startX: pageX, startY: pageY, moved: false };
+  };
+
+  const updatePressMovement = (photoId: number, event: GestureResponderEvent) => {
+    const state = pressStateRef.current[photoId];
+    if (!state || state.moved) return;
+
+    const { pageX, pageY } = event.nativeEvent;
+    if (
+      Math.abs(pageX - state.startX) > TAP_MOVE_TOLERANCE ||
+      Math.abs(pageY - state.startY) > TAP_MOVE_TOLERANCE
+    ) {
+      state.moved = true;
+    }
+  };
+
+  const shouldHandlePress = (photoId: number) => {
+    const state = pressStateRef.current[photoId];
+    delete pressStateRef.current[photoId];
+    return !state?.moved;
+  };
 
   const renderCard = (photo: VotePhoto, style: object, photoIndex: number) => (
     <View key={photo.id} style={[styles.photoCard, style]}>
       <Pressable
-        onPress={interactive ? () => onPhotoPress(photo.id, photoIndex) : undefined}
+        onPressIn={interactive ? (event) => beginPress(photo.id, event) : undefined}
+        onPressOut={interactive ? (event) => updatePressMovement(photo.id, event) : undefined}
+        onTouchMove={interactive ? (event) => updatePressMovement(photo.id, event) : undefined}
+        onPress={interactive ? () => {
+          if (!shouldHandlePress(photo.id)) return;
+          onPhotoPress(photo.id, photoIndex);
+        } : undefined}
         disabled={!interactive || selectedPhotoId !== null}
         style={styles.photoCardPressable}
       >
