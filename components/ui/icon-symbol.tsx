@@ -38,6 +38,7 @@ const MAPPING = {
   "rectangle.portrait.and.arrow.right": "logout",
   "arrow.right": "arrow-forward",
   "plus": "add",
+  "pencil": "edit",
   "square.and.arrow.up": "share",
   "arrowshape.turn.up.right.fill": "redo",
   "link": "link",

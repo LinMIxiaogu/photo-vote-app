@@ -29,6 +29,36 @@ export const appRouter = router({
 
   // User operations
   users: router({
+    updateName: protectedProcedure
+      .input(z.object({
+        name: z.string().trim().min(1).max(20),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const name = input.name.trim();
+        const currentName = ctx.user.name?.trim() ?? "";
+
+        if (name === currentName) {
+          return {
+            name,
+            pendingReview: ctx.user.nameModerationStatus === "pending",
+          };
+        }
+
+        const textMod = await moderateText(name, "nickname_detection");
+        const status = textMod.pass ? "approved" : "pending";
+
+        await db.updateUserName(ctx.user.id, name);
+        await db.updateUserNameModerationStatus(ctx.user.id, status);
+        await db.createModerationRecord({
+          targetType: "user_name",
+          targetId: ctx.user.id,
+          status,
+          autoResult: textMod.pass ? "pass" : textMod.result,
+          autoMessage: textMod.pass ? null : (textMod.message ?? "Username needs review"),
+        });
+
+        return { name, pendingReview: !textMod.pass };
+      }),
     updateAvatar: protectedProcedure
       .input(z.object({
         base64: z.string(),

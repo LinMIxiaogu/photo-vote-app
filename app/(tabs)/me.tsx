@@ -9,6 +9,7 @@ import {
   Platform,
   Alert,
   Modal,
+  TextInput,
   useWindowDimensions,
 } from "react-native";
 import Animated, {
@@ -331,7 +332,11 @@ export default function MeScreen() {
   const [deregistering, setDeregistering] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [pendingAsset, setPendingAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [showNameEditor, setShowNameEditor] = useState(false);
+  const [editingName, setEditingName] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
+  const updateNameMutation = trpc.users.updateName.useMutation();
   const updateAvatarMutation = trpc.users.updateAvatar.useMutation();
   const deregisterMutation = trpc.auth.deregister.useMutation();
 
@@ -371,6 +376,13 @@ export default function MeScreen() {
     setShowFeedback(true);
   };
 
+  const handleNamePress = () => {
+    if (!user) return;
+    haptic();
+    setEditingName(user.name?.trim() ?? "");
+    setShowNameEditor(true);
+  };
+
   const handleAvatarPress = async () => {
     if (!user) return;
     haptic();
@@ -403,6 +415,41 @@ export default function MeScreen() {
       Alert.alert("上传失败", e?.message ?? "头像更换失败，请重试");
     } finally {
       setUploadingAvatar(false);
+    }
+  };
+
+  const handleSaveName = async () => {
+    if (!user || savingName) return;
+
+    const nextName = editingName.trim();
+    if (!nextName) {
+      Alert.alert("提示", "请输入用户名");
+      return;
+    }
+
+    if (nextName === (user.name?.trim() ?? "")) {
+      setShowNameEditor(false);
+      return;
+    }
+
+    setSavingName(true);
+    try {
+      const { name, pendingReview } = await updateNameMutation.mutateAsync({ name: nextName });
+      const updatedUser: Auth.User = {
+        ...user,
+        name,
+        nameModerationStatus: pendingReview ? "pending" : "approved",
+      };
+      await Auth.setUserInfo(updatedUser);
+      setShowNameEditor(false);
+      await refresh();
+      if (pendingReview) {
+        Alert.alert("提示", "用户名已提交审核，审核通过后将对外展示");
+      }
+    } catch (e: any) {
+      Alert.alert("修改失败", e?.message ?? "用户名修改失败，请重试");
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -543,9 +590,34 @@ export default function MeScreen() {
             </View>
           </Pressable>
           <View style={styles.profileText}>
-            <Text style={[styles.profileName, { color: colors.text }]} numberOfLines={1}>
-              {displayName(user)}
-            </Text>
+            <Pressable onPress={handleNamePress} disabled={savingName} hitSlop={6}>
+              {({ pressed }) => (
+                <View style={styles.nameRow}>
+                  <Text
+                    style={[
+                      styles.profileName,
+                      { color: colors.text },
+                      pressed && styles.namePressed,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {displayName(user)}
+                  </Text>
+                  <View
+                    style={[
+                      styles.nameEditBadge,
+                      { backgroundColor: colors.surface, borderColor: colors.border },
+                    ]}
+                  >
+                    {savingName ? (
+                      <ActivityIndicator size="small" color={colors.tint} style={{ transform: [{ scale: 0.7 }] }} />
+                    ) : (
+                      <IconSymbol name="pencil" size={12} color={colors.muted} />
+                    )}
+                  </View>
+                </View>
+              )}
+            </Pressable>
             <Text style={[styles.profileSub, { color: colors.muted }]}>同步收藏与发布记录</Text>
             {(user.avatarModerationStatus && user.avatarModerationStatus !== "approved") || (user.nameModerationStatus && user.nameModerationStatus !== "approved") ? (
               <Text style={[styles.profileSub, { color: user.avatarModerationStatus === "rejected" || user.nameModerationStatus === "rejected" ? "#EF4444" : colors.tint }]}>
@@ -662,6 +734,48 @@ export default function MeScreen() {
           onCancel={() => setPendingAsset(null)}
         />
       )}
+
+      <Modal visible={showNameEditor} transparent animationType="fade" onRequestClose={() => !savingName && setShowNameEditor(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.nameModalCard, { backgroundColor: colors.background, borderColor: colors.border }]}>
+            <Text style={[styles.nameModalTitle, { color: colors.text }]}>修改用户名</Text>
+            <Text style={[styles.nameModalDesc, { color: colors.muted }]}>点击用户名即可修改，提交后需要审核通过才会对外展示。</Text>
+            <TextInput
+              value={editingName}
+              onChangeText={setEditingName}
+              placeholder="请输入用户名"
+              placeholderTextColor={colors.muted}
+              maxLength={20}
+              autoFocus
+              editable={!savingName}
+              style={[
+                styles.nameInput,
+                {
+                  color: colors.text,
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                },
+              ]}
+            />
+            <View style={styles.nameModalActions}>
+              <Pressable onPress={() => setShowNameEditor(false)} disabled={savingName} style={styles.nameActionFlex}>
+                {({ pressed }) => (
+                  <View style={[styles.nameCancelBtn, { borderColor: colors.border }, pressed && styles.buttonPressed]}>
+                    <Text style={[styles.nameCancelText, { color: colors.text }]}>取消</Text>
+                  </View>
+                )}
+              </Pressable>
+              <Pressable onPress={handleSaveName} disabled={savingName} style={styles.nameActionFlex}>
+                {({ pressed }) => (
+                  <View style={[styles.nameConfirmBtn, { backgroundColor: colors.tint }, (pressed || savingName) && styles.buttonPressed]}>
+                    {savingName ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.nameConfirmText}>提交</Text>}
+                  </View>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScreenContainer>
   );
 }
@@ -778,9 +892,29 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    minWidth: 0,
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+  },
   profileName: {
     fontSize: 18,
     fontWeight: "600",
+    flexShrink: 1,
+  },
+  namePressed: {
+    opacity: 0.7,
+  },
+  nameEditBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   profileSub: {
     fontSize: 12,
@@ -863,6 +997,64 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#EF4444",
     textDecorationLine: "underline",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  nameModalCard: {
+    width: "100%",
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 20,
+    gap: 14,
+  },
+  nameModalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  nameModalDesc: {
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  nameInput: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+  },
+  nameModalActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  nameActionFlex: {
+    flex: 1,
+  },
+  nameCancelBtn: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  nameCancelText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  nameConfirmBtn: {
+    borderRadius: 14,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  nameConfirmText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
   },
   cardShadow: {
     shadowColor: "#000",
