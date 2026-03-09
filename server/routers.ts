@@ -183,7 +183,8 @@ export const appRouter = router({
         const isOwner = !!ctx.user && card.userId === ctx.user.id;
         if (card.moderationStatus !== "approved" && !isOwner) return null;
         const photos = await db.getPhotosByCardId(input.cardId, { includeUnapproved: isOwner });
-        return { ...card, photos };
+        const publisher = await db.getUserDisplayProfile(card.userId);
+        return { ...card, photos, ...publisher };
       }),
 
     // Get cards created by the current logged-in user
@@ -565,6 +566,13 @@ export const appRouter = router({
       .query(async ({ input, ctx }) => {
         const isFavorited = await db.isFavoritedByUserId(ctx.user.id, input.cardId);
         return { isFavorited };
+      }),
+
+    count: publicProcedure
+      .input(z.object({ cardId: z.number() }))
+      .query(async ({ input }) => {
+        const count = await db.getFavoritesCountByCardId(input.cardId);
+        return { count };
       }),
 
     // Get current user's favorites

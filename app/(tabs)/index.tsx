@@ -249,6 +249,7 @@ export default function ImageTestScreen() {
       setUserVotedAt(data.voteDate);
       setShowResult(true);
       setShowComments(false);
+      router.replace(`/result?cardId=${variables.cardId}`);
     },
     onError: (error) => {
       console.error("Vote error:", error);
@@ -462,6 +463,7 @@ export default function ImageTestScreen() {
       // 已有投票记录：直接展示原有结果，忽略本次选择
       if (myVoteResultData) {
         applyPreviousVoteResult(myVoteResultData);
+        router.replace(`/result?cardId=${currentCard.id}`);
         return;
       }
       setSelectedPhotoId(photoId);

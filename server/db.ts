@@ -415,7 +415,7 @@ export async function getRandomAvailableCards(
 // ==================== Comment Operations ====================
 
 /** Build a display name for a commenter. Prefers real name, then masked phone, then generic fallback. */
-function buildUserName(user: { name: string | null; phone: string | null } | null | undefined): string {
+export function buildUserName(user: { name: string | null; phone: string | null } | null | undefined): string {
   if (user?.name?.trim()) return user.name.trim();
   if (user?.phone) {
     const p = user.phone;
@@ -423,6 +423,27 @@ function buildUserName(user: { name: string | null; phone: string | null } | nul
     return p;
   }
   return "用户";
+}
+
+export async function getUserDisplayProfile(userId: number | null | undefined): Promise<{ userName: string; userAvatarUrl: string | null }> {
+  if (userId == null) {
+    return { userName: "匿名发布", userAvatarUrl: null };
+  }
+
+  const user = await getUserById(userId);
+  if (!user) {
+    return { userName: "匿名发布", userAvatarUrl: null };
+  }
+
+  const userName = user.nameModerationStatus === "approved"
+    ? buildUserName({ name: user.name, phone: user.phone })
+    : buildUserName({ name: null, phone: user.phone });
+
+  const userAvatarUrl = user.avatarModerationStatus === "approved"
+    ? user.avatarUrl ?? null
+    : null;
+
+  return { userName, userAvatarUrl };
 }
 
 export async function createComment(data: InsertComment): Promise<number> {
@@ -633,6 +654,15 @@ export async function isFavoritedByUserId(userId: number, cardId: number): Promi
     .where(and(eq(favorites.userId, userId), eq(favorites.cardId, cardId)))
     .limit(1);
   return result.length > 0;
+}
+
+export async function getFavoritesCountByCardId(cardId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ count: sql<number>`count(*)` })
+    .from(favorites)
+    .where(eq(favorites.cardId, cardId));
+  return result[0]?.count ?? 0;
 }
 
 export async function getFavoritesByUserId(userId: number): Promise<{ cardId: number; createdAt: Date }[]> {
