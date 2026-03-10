@@ -901,8 +901,7 @@ export default function ImageTestScreen() {
                         {showComments ? "收起" : "查看"}评论
                         {commentsData?.comments.length ? ` (${commentsData.comments.length})` : ""}
                       </Text>
-                    </Pressable>
-                  </View>
+                    </Pressable></View>
                 </>
               )}
             </View>

@@ -99,10 +99,10 @@ export default function LoginScreen() {
         ...result.user,
         lastSignedIn: new Date(result.user.lastSignedIn),
       };
-      await Auth.setUserInfo(userForStorage as Auth.User);
       if (result.token && Platform.OS !== "web") {
         await Auth.setSessionToken(result.token);
       }
+      await Auth.setUserInfo(userForStorage as Auth.User);
       router.replace("/(tabs)");
     } catch (e: any) {
       setError(e?.message || "登录失败");

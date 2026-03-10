@@ -40,10 +40,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             lastSignedIn: new Date(apiUser.lastSignedIn),
           };
           setUser(userInfo);
-          await Auth.setUserInfo(userInfo);
+          await Auth.setUserInfo(userInfo, { notify: false });
         } else {
           setUser(null);
-          await Auth.clearUserInfo();
+          await Auth.clearUserInfo({ notify: false });
         }
         return;
       }
@@ -71,8 +71,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       console.error("[Auth] Logout API call failed:", err);
     } finally {
-      await Auth.removeSessionToken();
-      await Auth.clearUserInfo();
+      await Auth.removeSessionToken({ notify: false });
+      await Auth.clearUserInfo({ notify: false });
       setUser(null);
       setError(null);
     }
@@ -94,6 +94,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       });
     }
+  }, [fetchUser]);
+
+  useEffect(() => {
+    return Auth.subscribeAuthStateChanged(() => {
+      fetchUser().catch((err) => {
+        console.error("[Auth] Failed to refresh auth state after storage change:", err);
+      });
+    });
   }, [fetchUser]);
 
   const value = useMemo(

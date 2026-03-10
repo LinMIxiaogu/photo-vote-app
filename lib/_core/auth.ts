@@ -15,6 +15,29 @@ export type User = {
   lastSignedIn: Date;
 };
 
+type AuthStorageOptions = {
+  notify?: boolean;
+};
+
+const authStateListeners = new Set<() => void>();
+
+function emitAuthStateChanged(): void {
+  authStateListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch (error) {
+      console.error("[Auth] Auth state listener failed:", error);
+    }
+  });
+}
+
+export function subscribeAuthStateChanged(listener: () => void): () => void {
+  authStateListeners.add(listener);
+  return () => {
+    authStateListeners.delete(listener);
+  };
+}
+
 export async function getSessionToken(): Promise<string | null> {
   try {
     // Web platform uses cookie-based auth, no manual token management needed
@@ -37,7 +60,10 @@ export async function getSessionToken(): Promise<string | null> {
   }
 }
 
-export async function setSessionToken(token: string): Promise<void> {
+export async function setSessionToken(
+  token: string,
+  options: AuthStorageOptions = {},
+): Promise<void> {
   try {
     // Web platform uses cookie-based auth, no manual token management needed
     if (Platform.OS === "web") {
@@ -49,13 +75,14 @@ export async function setSessionToken(token: string): Promise<void> {
     console.log("[Auth] Setting session token...", token.substring(0, 20) + "...");
     await SecureStore.setItemAsync(SESSION_TOKEN_KEY, token);
     console.log("[Auth] Session token stored in SecureStore successfully");
+    if (options.notify !== false) emitAuthStateChanged();
   } catch (error) {
     console.error("[Auth] Failed to set session token:", error);
     throw error;
   }
 }
 
-export async function removeSessionToken(): Promise<void> {
+export async function removeSessionToken(options: AuthStorageOptions = {}): Promise<void> {
   try {
     // Web platform uses cookie-based auth, logout is handled by server clearing cookie
     if (Platform.OS === "web") {
@@ -67,6 +94,7 @@ export async function removeSessionToken(): Promise<void> {
     console.log("[Auth] Removing session token...");
     await SecureStore.deleteItemAsync(SESSION_TOKEN_KEY);
     console.log("[Auth] Session token removed from SecureStore successfully");
+    if (options.notify !== false) emitAuthStateChanged();
   } catch (error) {
     console.error("[Auth] Failed to remove session token:", error);
   }
@@ -98,7 +126,7 @@ export async function getUserInfo(): Promise<User | null> {
   }
 }
 
-export async function setUserInfo(user: User): Promise<void> {
+export async function setUserInfo(user: User, options: AuthStorageOptions = {}): Promise<void> {
   try {
     console.log("[Auth] Setting user info...", user);
 
@@ -106,27 +134,31 @@ export async function setUserInfo(user: User): Promise<void> {
       // Use localStorage for web
       window.localStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
       console.log("[Auth] User info stored in localStorage successfully");
+      if (options.notify !== false) emitAuthStateChanged();
       return;
     }
 
     // Use SecureStore for native
     await SecureStore.setItemAsync(USER_INFO_KEY, JSON.stringify(user));
     console.log("[Auth] User info stored in SecureStore successfully");
+    if (options.notify !== false) emitAuthStateChanged();
   } catch (error) {
     console.error("[Auth] Failed to set user info:", error);
   }
 }
 
-export async function clearUserInfo(): Promise<void> {
+export async function clearUserInfo(options: AuthStorageOptions = {}): Promise<void> {
   try {
     if (Platform.OS === "web") {
       // Use localStorage for web
       window.localStorage.removeItem(USER_INFO_KEY);
+      if (options.notify !== false) emitAuthStateChanged();
       return;
     }
 
     // Use SecureStore for native
     await SecureStore.deleteItemAsync(USER_INFO_KEY);
+    if (options.notify !== false) emitAuthStateChanged();
   } catch (error) {
     console.error("[Auth] Failed to clear user info:", error);
   }
