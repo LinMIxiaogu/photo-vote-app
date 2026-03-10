@@ -206,7 +206,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const deleted = await db.deleteCard(input.cardId, ctx.user.id);
         if (!deleted) {
-          throw new Error("无法删除该卡片（仅可删除自己的上传）");
+          throw new Error("Card not found or you do not have permission to delete it");
         }
         return { success: true };
       }),
@@ -224,7 +224,7 @@ export const appRouter = router({
           description: input.description,
         });
         if (!updated) {
-          throw new Error("无法修改该卡片（仅可修改自己的上传）");
+          throw new Error("Card not found or you do not have permission to update it");
         }
         const textChecks: Array<{ pass: boolean; message?: string; result?: string }> = [];
         if (typeof input.title === "string" && input.title.trim()) {
@@ -295,7 +295,6 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const existingVote = await db.getVoteByUserAndCard(ctx.user.id, input.cardId);
         if (existingVote) {
-          // 已投过票：直接返回已有结果，不抛错，前端统一走 onSuccess 流程
           const photos = await db.getPhotosByCardId(input.cardId);
           const totalVotes = photos.reduce((sum, p) => sum + p.voteCount, 0);
           const votedPhoto = photos.find(p => p.id === existingVote.photoId);
@@ -331,8 +330,7 @@ export const appRouter = router({
         const card = await db.getCardById(input.cardId);
         if (card) {
           const newTotalVotes = card.totalVotes + 1;
-          const isCompleted = newTotalVotes >= 10;
-          await db.updateCardVotes(input.cardId, newTotalVotes, isCompleted);
+          await db.updateCardVotes(input.cardId, newTotalVotes);
         }
 
         const photos = await db.getPhotosByCardId(input.cardId);
@@ -404,13 +402,14 @@ export const appRouter = router({
 
   // Comment operations
   comments: router({
-    // 当前用户可查看评论：已投票或已收藏
+    // 闂佽崵鍠愮划搴㈡櫠濡ゅ懎绠伴柛娑橈攻濞呯娀鏌ｅΟ鑲╁笡闁稿鍔戦弻鏇熺節韫囨洜鏆犻梺缁樻尰濞茬喖寮诲☉妯锋瀻婵☆垵娅ｆ禒顓㈡⒑缂佹ɑ鎯堢紒缁樼箞楠炲棝宕堕埞鎯т壕闁挎繂楠搁獮妯讳繆閸欏鐏撮柟顔款潐閹峰懘宕崟顓燁吇缂傚倷娴囨ご绋款熆濮椻偓椤㈡瑨绠涘☉妯肩厬婵犮垼娉涢…顒€顭囬幘鍓佺＝濞达絿鍏樺鐑芥煕閺傚尅韬柛鈹惧亾濡炪倖鍨煎▔鏇⑺囬敃鍌涚厱闁规惌鍨崇弧鈧悗娈垮枔閸旀垿鐛崱娑欏亱闁割偒鍋呴ˉ鏃堟⒒娴ｇ儤鍤€闁宦板姂閹囧籍閸屾稑顏搁梺缁樻煥閹测剝鍒婄€涙绡€濠电姴鍊归ˉ鎴︽煕鐎ｎ偅宕岀€规洏鍔戦、娆撴嚍閵夈儺浼嗘繝?
     getByCardId: protectedProcedure
       .input(z.object({ cardId: z.number() }))
       .query(async ({ input, ctx }) => {
+        const card = await db.getCardById(input.cardId, { includeUnapproved: true }); const isOwner = !!card && card.userId === ctx.user.id;
         const hasVoted = await db.hasVotedOnCard(ctx.user.id, input.cardId);
         const hasFavorited = await db.isFavoritedByUserId(ctx.user.id, input.cardId);
-        if (!hasVoted && !hasFavorited) {
+        if (!isOwner && !hasVoted && !hasFavorited) {
           return { comments: [], canView: false };
         }
 
@@ -426,16 +425,17 @@ export const appRouter = router({
         return { comments: commentsWithVotes, canView: true };
       }),
 
-    // 获取某条评论下的回复
+    // 闂傚倷绀侀崥瀣磿閹惰棄搴婇柤鑹扮堪娴滃綊鏌涢妷顔煎闁藉啰鍠栭弻鐔兼焽閿曗偓楠炴鏌﹂崒姘煎剶闁诡喖缍婂畷鎯邦槻妞ゅ浚鍓氶妵鍕籍閳ь剟宕归崜浣虹煓濠㈣泛澶囬崑鎾绘晲鎼粹€愁潽闂佷紮缍佹禍鍫曞蓟濞戙垹唯鐟滃秵绂掑鍕╀簻?
     getReplies: protectedProcedure
       .input(z.object({
         parentId: z.number(),
         cardId: z.number(),
       }))
       .query(async ({ input, ctx }) => {
+        const card = await db.getCardById(input.cardId, { includeUnapproved: true }); const isOwner = !!card && card.userId === ctx.user.id;
         const hasVoted = await db.hasVotedOnCard(ctx.user.id, input.cardId);
         const hasFavorited = await db.isFavoritedByUserId(ctx.user.id, input.cardId);
-        if (!hasVoted && !hasFavorited) {
+        if (!isOwner && !hasVoted && !hasFavorited) {
           return { replies: [], parentUserName: null };
         }
         const parent = await db.getCommentById(input.parentId);
@@ -454,7 +454,7 @@ export const appRouter = router({
         return { replies: repliesWithVotes, parentUserName: null };
       }),
 
-    // 发表评论：已投票或已收藏方可发表（images 为已上传的 URL 数组，由客户端先调用 /api/upload 获得）
+    // 闂傚倷绀侀幉锟犳偡閿曞倸鍨傚┑鍌滎焾杩濋梺鍛婂姦娴滄繄鈧碍宀搁弻娑㈠即閵娿儲鐝梺鍝ュ枎閻楁捇寮婚妸銉㈡婵炲棙甯掗ˉ婵嬫⒑閸涘﹤鐓€缂佺粯绻堥悰顔芥償閵娿儱宓嗛梺缁橈供閸犳牗绂嶉崼鏇熲拺闂傚牊绋掗ˉ娆戠磼閳ь剚绗熼埀顒€鐣峰▎鎾存櫢闁绘灏欓崫妤呮⒑鐠団€崇仯濠⒀勵殜钘熼柟杈鹃檮閻撴瑩鎮楀☉娆樼劷濠⑿板洦鍋ｉ柟閭﹀枛閺嬫垿鏌熷畡鐗堝櫣妞ゎ厹鍔戝畷杈疀閹炬彃顥氶梻浣告啞娓氭宕板Δ鍛闁告浼濋悷閭︾叆闁告侗鍘兼俊娲⒑閸濆嫮鐏遍柛鐘崇墪閻ｇ兘鏁愭径妯绘櫖濠殿喗锕╅崜娑樼暆濞戙垺鐓?
     create: protectedProcedure
       .input(z.object({
         cardId: z.number(),
@@ -465,11 +465,12 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         if (!input.content.trim() && (!input.imageUrls || input.imageUrls.length === 0)) {
-          throw new Error("评论内容不能为空");
+          throw new Error("评论内容或图片不能为空");
         }
+        const card = await db.getCardById(input.cardId, { includeUnapproved: true }); const isOwner = !!card && card.userId === ctx.user.id;
         const hasVoted = await db.hasVotedOnCard(ctx.user.id, input.cardId);
         const hasFavorited = await db.isFavoritedByUserId(ctx.user.id, input.cardId);
-        if (!hasVoted && !hasFavorited) {
+        if (!isOwner && !hasVoted && !hasFavorited) {
           throw new Error("参与投票后可发表评论");
         }
         if (input.parentId != null) {
@@ -577,17 +578,29 @@ export const appRouter = router({
 
     // Get current user's favorites
     getMyFavorites: protectedProcedure
-      .query(async ({ ctx }) => {
-        const favoritesList = await db.getFavoritesByUserId(ctx.user.id);
+      .input(z.object({
+        cursor: z.number().optional(),
+        limit: z.number().min(1).max(50).optional(),
+      }).optional())
+      .query(async ({ input, ctx }) => {
+        const page = await db.getFavoritesPageByUserId(ctx.user.id, {
+          cursor: input?.cursor,
+          limit: input?.limit ?? 20,
+        });
+        const totalCount = await db.getFavoritesCountByUserId(ctx.user.id);
         const favoritesWithDetails = await Promise.all(
-          favoritesList.map(async (fav) => {
+          page.items.map(async (fav) => {
             const card = await db.getCardById(fav.cardId);
             if (!card) return null;
             const photos = await db.getPhotosByCardId(fav.cardId);
             return { ...card, photos, favoritedAt: fav.createdAt };
           })
         );
-        return favoritesWithDetails.filter(Boolean);
+        return {
+          items: favoritesWithDetails.filter(Boolean),
+          nextCursor: page.nextCursor,
+          totalCount,
+        };
       }),
   }),
 });

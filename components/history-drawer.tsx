@@ -59,27 +59,22 @@ export function HistoryDrawer({ visible, onClose }: HistoryDrawerProps) {
     setEditingCard({ id: item.id, title: item.title, description: item.description });
   };
 
-  const handleCardPress = (cardId: number, isCompleted: boolean) => {
+  const handleCardPress = (cardId: number) => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     onClose();
-    if (isCompleted) {
-      router.push(`/result?cardId=${cardId}`);
-    } else {
-      router.push(`/waiting?cardId=${cardId}`);
-    }
+    router.push(`/result?cardId=${cardId}`);
   };
 
   const renderCard = ({ item }: { item: any }) => {
     const firstPhoto = item.photos?.[0];
-    const progress = Math.round((item.totalVotes / 10) * 100);
     const moderationStatus = item.moderationStatus as "approved" | "pending" | "rejected" | undefined;
 
     return (
       <View style={[styles.cardItem, styles.cardShadow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <Pressable
-          onPress={() => handleCardPress(item.id, item.isCompleted)}
+          onPress={() => handleCardPress(item.id)}
           style={styles.cardMainPressable}
         >
           {({ pressed }) => (
@@ -100,40 +95,40 @@ export function HistoryDrawer({ visible, onClose }: HistoryDrawerProps) {
                 <View style={styles.progressContainer}>
                   <View style={[styles.progressBar, { backgroundColor: colors.border }]}>
                     <View
-                      style={[styles.progressFill, { width: `${progress}%`, backgroundColor: colors.tint }]}
+                      style={[styles.progressFill, { width: "100%", backgroundColor: colors.tint }]}
                     />
                   </View>
                   <Text style={[styles.progressText, { color: colors.muted }]}>
-                    {item.totalVotes}/10 票
+                    {item.totalVotes} 票
                   </Text>
                 </View>
-                <View style={[
-                  styles.statusBadge,
-                  item.isCompleted ? styles.statusCompleted : styles.statusPending,
-                  { backgroundColor: item.isCompleted ? "rgba(34, 197, 94, 0.12)" : "rgba(99, 102, 241, 0.12)" }
-                ]}>
-                  <Text style={[
-                    styles.statusText,
-                    item.isCompleted ? styles.statusTextCompleted : styles.statusTextPending,
-                    { color: item.isCompleted ? colors.success : colors.tint }
-                  ]}>
-                    {item.isCompleted ? "已完成" : "进行中"}
-                  </Text>
-                </View>
-                {moderationStatus && moderationStatus !== "approved" && (
-                  <View style={[
+                <View
+                  style={[
                     styles.statusBadge,
-                    moderationStatus === "rejected" ? styles.statusRejected : styles.statusPending,
-                    { backgroundColor: moderationStatus === "rejected" ? "rgba(239, 68, 68, 0.12)" : "rgba(245, 158, 11, 0.12)" }
-                  ]}>
-                    <Text style={[
+                    moderationStatus === "rejected"
+                      ? { backgroundColor: "rgba(239, 68, 68, 0.12)" }
+                      : moderationStatus === "pending"
+                        ? { backgroundColor: "rgba(245, 158, 11, 0.12)" }
+                        : { backgroundColor: "rgba(99, 102, 241, 0.12)" },
+                  ]}
+                >
+                  <Text
+                    style={[
                       styles.statusText,
-                      { color: moderationStatus === "rejected" ? "#EF4444" : "#F59E0B" }
-                    ]}>
-                      {moderationStatus === "pending" ? "审核中" : "未通过"}
-                    </Text>
-                  </View>
-                )}
+                      moderationStatus === "rejected"
+                        ? { color: "#EF4444" }
+                        : moderationStatus === "pending"
+                          ? { color: "#F59E0B" }
+                          : { color: colors.tint },
+                    ]}
+                  >
+                    {moderationStatus === "rejected"
+                      ? "未通过"
+                      : moderationStatus === "pending"
+                        ? "审核中"
+                        : "已发布"}
+                  </Text>
+                </View>
               </View>
               <IconSymbol name="chevron.right" size={20} color={colors.muted} />
             </View>

@@ -1,4 +1,4 @@
-import { eq, and, or, sql, desc, notInArray, isNull, inArray, gte, lte } from "drizzle-orm";
+import { eq, and, or, sql, desc, notInArray, isNull, inArray, gte, lte, lt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, cards, photos, votes, comments, favorites, feedbacks, moderationRecords, InsertCard, InsertPhoto, InsertVote, InsertComment, InsertFavorite, InsertFeedback, InsertModerationRecord, Card, Photo, Comment, ModerationRecord } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -209,11 +209,11 @@ export async function getCardsByUserId(userId: number): Promise<Card[]> {
   return db.select().from(cards).where(eq(cards.userId, userId)).orderBy(desc(cards.createdAt));
 }
 
-export async function updateCardVotes(cardId: number, totalVotes: number, isCompleted: boolean): Promise<void> {
+export async function updateCardVotes(cardId: number, totalVotes: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   
-  await db.update(cards).set({ totalVotes, isCompleted }).where(eq(cards.id, cardId));
+  await db.update(cards).set({ totalVotes }).where(eq(cards.id, cardId));
 }
 
 export async function updateCardModerationStatus(cardId: number, status: "approved" | "pending" | "rejected"): Promise<void> {
@@ -252,7 +252,7 @@ export async function deleteCard(cardId: number, userId: number): Promise<boolea
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const card = await getCardById(cardId);
+  const card = await getCardById(cardId, { includeUnapproved: true });
   if (!card || card.userId !== userId) return false;
 
   await db.delete(votes).where(eq(votes.cardId, cardId));
@@ -272,7 +272,7 @@ export async function updateCard(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const card = await getCardById(cardId);
+  const card = await getCardById(cardId, { includeUnapproved: true });
   if (!card || card.userId !== userId) return false;
 
   await db.update(cards).set(data).where(and(eq(cards.id, cardId), eq(cards.userId, userId)));
@@ -368,7 +368,7 @@ export async function getRandomAvailableCard(userId?: number): Promise<Card | un
 
   await expireTimedOutPendingModeration();
 
-  const conditions = userId != null ? [eq(cards.isCompleted, false), eq(cards.moderationStatus, "approved")] : [eq(cards.moderationStatus, "approved")];
+  const conditions = [eq(cards.moderationStatus, "approved")];
 
   if (userId != null) {
     const votedRows = await db.select({ cardId: votes.cardId }).from(votes).where(eq(votes.userId, userId));
@@ -665,6 +665,15 @@ export async function getFavoritesCountByCardId(cardId: number): Promise<number>
   return result[0]?.count ?? 0;
 }
 
+export async function getFavoritesCountByUserId(userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ count: sql<number>`count(*)` })
+    .from(favorites)
+    .where(eq(favorites.userId, userId));
+  return result[0]?.count ?? 0;
+}
+
 export async function getFavoritesByUserId(userId: number): Promise<{ cardId: number; createdAt: Date }[]> {
   const db = await getDb();
   if (!db) return [];
@@ -676,6 +685,38 @@ export async function getFavoritesByUserId(userId: number): Promise<{ cardId: nu
     .where(eq(favorites.userId, userId))
     .orderBy(desc(favorites.createdAt));
   return result;
+}
+
+export async function getFavoritesPageByUserId(
+  userId: number,
+  options?: { cursor?: number; limit?: number }
+): Promise<{ items: Array<{ id: number; cardId: number; createdAt: Date }>; nextCursor?: number }> {
+  const db = await getDb();
+  if (!db) return { items: [] };
+
+  const pageSize = Math.min(Math.max(options?.limit ?? 20, 1), 50);
+  const whereClause = options?.cursor
+    ? and(eq(favorites.userId, userId), lt(favorites.id, options.cursor))
+    : eq(favorites.userId, userId);
+
+  const rows = await db
+    .select({
+      id: favorites.id,
+      cardId: favorites.cardId,
+      createdAt: favorites.createdAt,
+    })
+    .from(favorites)
+    .where(whereClause)
+    .orderBy(desc(favorites.id))
+    .limit(pageSize + 1);
+
+  const hasMore = rows.length > pageSize;
+  const items = hasMore ? rows.slice(0, pageSize) : rows;
+
+  return {
+    items,
+    nextCursor: hasMore ? items[items.length - 1]?.id : undefined,
+  };
 }
 
 // ==================== Feedback Operations ====================

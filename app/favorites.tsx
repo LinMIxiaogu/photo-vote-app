@@ -1,4 +1,4 @@
-import { View, Text, Pressable, StyleSheet, ScrollView, Platform, RefreshControl } from "react-native";
+import { View, Text, Pressable, StyleSheet, Platform, FlatList, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
 import { ScreenContainer } from "@/components/screen-container";
@@ -10,25 +10,40 @@ import { getImageUrl } from "@/lib/utils";
 import * as Haptics from "expo-haptics";
 import { useState, useCallback } from "react";
 
+const PAGE_SIZE = 20;
 
 export default function FavoritesScreen() {
   const router = useRouter();
   const colors = useColors();
   const { user } = useAuth();
 
-  // Tracks cards whose favorite state has been locally toggled (true = favorited, false = unfavorited)
   const [localFavoriteOverrides, setLocalFavoriteOverrides] = useState<Record<number, boolean>>({});
   const [refreshing, setRefreshing] = useState(false);
 
   const utils = trpc.useUtils();
-  const { data: favorites, isLoading } = trpc.favorites.getMyFavorites.useQuery(
-    undefined,
-    { enabled: !!user }
+  const {
+    data,
+    isLoading,
+    isRefetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = trpc.favorites.getMyFavorites.useInfiniteQuery(
+    { limit: PAGE_SIZE },
+    {
+      enabled: !!user,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }
   );
+
+  const favorites = (data?.pages.flatMap((page) => page.items) ?? []).filter(
+    (item): item is Exclude<typeof item, null> => item !== null
+  );
+  const totalCount = data?.pages[0]?.totalCount ?? 0;
 
   const toggleFavoriteMutation = trpc.favorites.toggle.useMutation({
     onError: (err, vars) => {
-      // Revert local override on failure
       setLocalFavoriteOverrides((prev) => {
         const next = { ...prev };
         delete next[vars.cardId];
@@ -44,8 +59,9 @@ export default function FavoritesScreen() {
     setRefreshing(true);
     setLocalFavoriteOverrides({});
     await utils.favorites.getMyFavorites.invalidate();
+    await refetch();
     setRefreshing(false);
-  }, [utils.favorites.getMyFavorites]);
+  }, [refetch, utils.favorites.getMyFavorites]);
 
   const handleBack = () => {
     router.back();
@@ -58,19 +74,87 @@ export default function FavoritesScreen() {
     router.push(`/result?cardId=${cardId}&from=favorites`);
   };
 
-  const handleToggleFavoriteLocal = (e: any, cardId: number) => {
-    e?.stopPropagation?.();
+  const handleToggleFavoriteLocal = (e: unknown, cardId: number) => {
+    (e as { stopPropagation?: () => void } | undefined)?.stopPropagation?.();
     if (!user) return;
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    // Determine current effective state: all cards on this screen start as favorited
+
     const currentlyFavorited = localFavoriteOverrides[cardId] !== undefined
       ? localFavoriteOverrides[cardId]
       : true;
-    // Toggle local state immediately (no list refresh)
+
     setLocalFavoriteOverrides((prev) => ({ ...prev, [cardId]: !currentlyFavorited }));
     toggleFavoriteMutation.mutate({ cardId });
+  };
+
+  const handleLoadMore = () => {
+    if (!hasNextPage || isFetchingNextPage) return;
+    void fetchNextPage();
+  };
+
+  const renderFavoriteCard = ({ item: favorite }: { item: (typeof favorites)[number] }) => {
+    const isFavorited = localFavoriteOverrides[favorite.id] !== undefined
+      ? localFavoriteOverrides[favorite.id]
+      : true;
+
+    return (
+      <Pressable
+        onPress={() => handleCardPress(favorite.id)}
+        style={({ pressed }) => [
+          styles.card,
+          styles.cardShadow,
+          { backgroundColor: colors.background },
+          pressed && styles.cardPressed,
+        ]}
+      >
+        <View style={styles.photosGrid}>
+          {favorite.photos.slice(0, 4).map((photo, index) => (
+            <View
+              key={photo.id}
+              style={[
+                styles.photoItem,
+                favorite.photos.length === 1 && styles.photoItemSingle,
+                favorite.photos.length === 2 && styles.photoItemHalf,
+                favorite.photos.length === 3 && index === 2 && styles.photoItemFull,
+              ]}
+            >
+              <Image
+                source={{ uri: getImageUrl(photo.url) }}
+                style={styles.photoImage}
+                contentFit="cover"
+              />
+            </View>
+          ))}
+        </View>
+
+        <View style={[styles.cardBar, { borderTopColor: colors.border }]}>
+          <View style={styles.cardBarStats}>
+            <IconSymbol name="person.2.fill" size={14} color={colors.muted} />
+            <Text style={[styles.cardBarText, { color: colors.muted }]}>{favorite.totalVotes} 票</Text>
+            <View style={[styles.dot, { backgroundColor: colors.border }]} />
+            <IconSymbol name="photo.fill" size={13} color={colors.muted} />
+            <Text style={[styles.cardBarText, { color: colors.muted }]}>{favorite.photos.length} 张</Text>
+          </View>
+
+          <Pressable
+            onPress={(e) => handleToggleFavoriteLocal(e, favorite.id)}
+            hitSlop={12}
+            style={({ pressed }) => [
+              styles.heartButton,
+              pressed && styles.heartButtonPressed,
+            ]}
+          >
+            <IconSymbol
+              name={isFavorited ? "heart.fill" : "heart"}
+              size={18}
+              color={isFavorited ? "#EF4444" : "#9CA3AF"}
+            />
+          </Pressable>
+        </View>
+      </Pressable>
+    );
   };
 
   return (
@@ -80,7 +164,6 @@ export default function FavoritesScreen() {
       style={{ backgroundColor: colors.surface }}
     >
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
-        {/* Header */}
         <View style={styles.header}>
           <Pressable
             onPress={handleBack}
@@ -91,9 +174,9 @@ export default function FavoritesScreen() {
           <View style={styles.headerText}>
             <View style={styles.headerRow}>
               <Text style={[styles.title, { color: colors.text }]}>我的收藏</Text>
-              {favorites && favorites.length > 0 && (
+              {totalCount > 0 && (
                 <View style={[styles.countBadge, { backgroundColor: colors.tint }]}>
-                  <Text style={styles.countBadgeText}>{favorites.length}</Text>
+                  <Text style={styles.countBadgeText}>{totalCount}</Text>
                 </View>
               )}
             </View>
@@ -102,7 +185,6 @@ export default function FavoritesScreen() {
           <View style={styles.placeholder} />
         </View>
 
-        {/* Content */}
         {isLoading ? (
           <View style={styles.emptyContainer}>
             <View style={[styles.emptyCard, { backgroundColor: colors.background, borderColor: colors.border }]}>
@@ -127,7 +209,7 @@ export default function FavoritesScreen() {
               </Pressable>
             </View>
           </View>
-        ) : !favorites || favorites.length === 0 ? (
+        ) : favorites.length === 0 ? (
           <View style={styles.emptyContainer}>
             <View style={[styles.emptyCard, { backgroundColor: colors.background, borderColor: colors.border }]}>
               <View style={styles.emptyIconWrap}>
@@ -138,87 +220,23 @@ export default function FavoritesScreen() {
             </View>
           </View>
         ) : (
-          <ScrollView
+          <FlatList
+            data={favorites}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={renderFavoriteCard}
             style={styles.scrollView}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={handleRefresh}
-                tintColor={colors.tint}
-                colors={[colors.tint]}
-              />
-            }
-          >
-            {favorites.map((favorite) => {
-              if (!favorite) return null;
-              const totalVotes = favorite.totalVotes;
-              const isFavorited = localFavoriteOverrides[favorite.id] !== undefined
-                ? localFavoriteOverrides[favorite.id]
-                : true;
-
-              return (
-                <Pressable
-                  key={favorite.id}
-                  onPress={() => handleCardPress(favorite.id)}
-                  style={({ pressed }) => [
-                    styles.card,
-                    styles.cardShadow,
-                    { backgroundColor: colors.background },
-                    pressed && styles.cardPressed,
-                  ]}
-                >
-                  {/* Photos Grid */}
-                  <View style={styles.photosGrid}>
-                    {favorite.photos.slice(0, 4).map((photo, index) => (
-                      <View
-                        key={photo.id}
-                        style={[
-                          styles.photoItem,
-                          favorite.photos.length === 1 && styles.photoItemSingle,
-                          favorite.photos.length === 2 && styles.photoItemHalf,
-                          favorite.photos.length === 3 && index === 2 && styles.photoItemFull,
-                        ]}
-                      >
-                        <Image
-                          source={{ uri: getImageUrl(photo.url) }}
-                          style={styles.photoImage}
-                          contentFit="cover"
-                        />
-                      </View>
-                    ))}
-                  </View>
-
-                  {/* Card bottom bar */}
-                  <View style={[styles.cardBar, { borderTopColor: colors.border }]}>
-                    <View style={styles.cardBarStats}>
-                      <IconSymbol name="person.2.fill" size={14} color={colors.muted} />
-                      <Text style={[styles.cardBarText, { color: colors.muted }]}>{totalVotes} 票</Text>
-                      <View style={[styles.dot, { backgroundColor: colors.border }]} />
-                      <IconSymbol name="photo.fill" size={13} color={colors.muted} />
-                      <Text style={[styles.cardBarText, { color: colors.muted }]}>{favorite.photos.length} 张</Text>
-                    </View>
-
-                    <Pressable
-                      onPress={(e) => handleToggleFavoriteLocal(e, favorite.id)}
-                      hitSlop={12}
-                      style={({ pressed }) => [
-                        styles.heartButton,
-                        pressed && styles.heartButtonPressed,
-                      ]}
-                    >
-                      <IconSymbol
-                        name={isFavorited ? "heart.fill" : "heart"}
-                        size={18}
-                        color={isFavorited ? "#EF4444" : "#9CA3AF"}
-                      />
-                    </Pressable>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+            refreshing={refreshing || isRefetching}
+            onRefresh={handleRefresh}
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.35}
+            ListFooterComponent={isFetchingNextPage ? (
+              <View style={styles.listFooter}>
+                <ActivityIndicator size="small" color={colors.tint} />
+              </View>
+            ) : <View style={styles.listFooterSpacer} />}
+          />
         )}
       </View>
     </ScreenContainer>
@@ -285,6 +303,12 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 32,
     gap: 14,
+  },
+  listFooter: {
+    paddingVertical: 8,
+  },
+  listFooterSpacer: {
+    height: 8,
   },
   emptyContainer: {
     flex: 1,

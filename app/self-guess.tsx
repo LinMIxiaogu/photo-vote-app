@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
   Image as RNImage,
   TextInput,
   KeyboardAvoidingView,
+  Animated,
+  Easing,
 } from "react-native";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -17,7 +19,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { ActionButton } from "@/components/action-button";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { trpc } from "@/lib/trpc";
-import { getTempPhotos, clearTempPhotos } from "@/lib/temp-photos-store";
+import { clearTempPhotos, getTempPhotos } from "@/lib/temp-photos-store";
 
 const TEMP_PHOTOS_KEY = "@temp_photos";
 
@@ -33,16 +35,68 @@ export default function EditCopyScreen() {
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("选择你喜欢的");
   const [description, setDescription] = useState("");
+  const [toastMessage, setToastMessage] = useState("");
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastTranslateY = useRef(new Animated.Value(12)).current;
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const redirectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (message: string) => {
+    setToastMessage(message);
+
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+
+    toastOpacity.stopAnimation();
+    toastTranslateY.stopAnimation();
+
+    Animated.parallel([
+      Animated.timing(toastOpacity, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(toastTranslateY, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    toastTimeoutRef.current = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(toastOpacity, {
+          toValue: 0,
+          duration: 220,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(toastTranslateY, {
+          toValue: 8,
+          duration: 220,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 1400);
+  };
 
   const createCardMutation = trpc.cards.create.useMutation({
     onSuccess: (data) => {
       if (Platform.OS === "web") clearTempPhotos();
       else AsyncStorage.removeItem(TEMP_PHOTOS_KEY).catch(console.error);
-      if (data?.pendingReview) {
-        if (Platform.OS === "web") window.alert("内容已提交审核，审核通过后将对外展示");
-        else Alert.alert("提示", "内容已提交审核，审核通过后将对外展示");
-      }
-      router.replace(`/waiting?cardId=${data.cardId}`);
+
+      const successMessage = data?.pendingReview
+        ? "发布成功，审核通过后会展示"
+        : "发布成功";
+
+      showToast(successMessage);
+
+      if (redirectTimeoutRef.current) clearTimeout(redirectTimeoutRef.current);
+      redirectTimeoutRef.current = setTimeout(() => {
+        router.replace("/");
+      }, 900);
     },
     onError: (error) => {
       const msg = error.message || "创建失败，请重试";
@@ -79,6 +133,11 @@ export default function EditCopyScreen() {
     };
 
     loadPhotos();
+
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      if (redirectTimeoutRef.current) clearTimeout(redirectTimeoutRef.current);
+    };
   }, []);
 
   const handleConfirm = () => {
@@ -134,11 +193,11 @@ export default function EditCopyScreen() {
 
           <Text style={styles.subtitle}>为你的投票卡片添加标题</Text>
 
-          {/* Photo preview grid (read-only) */}
           <View style={styles.gridContainer}>
             {photos.map((photo, index) => {
               const imageUri =
                 photo.base64 ? `data:${photo.mimeType};base64,${photo.base64}` : photo.uri || "";
+
               return (
                 <View key={`${photo.uri}-${index}`} style={styles.gridItem}>
                   <View style={styles.photoContainer}>
@@ -166,7 +225,6 @@ export default function EditCopyScreen() {
             </View>
           )}
 
-          {/* Text fields */}
           <View style={styles.fieldsContainer}>
             <View style={styles.fieldGroup}>
               <View style={styles.labelRow}>
@@ -175,7 +233,7 @@ export default function EditCopyScreen() {
               </View>
               <TextInput
                 style={styles.textInput}
-                placeholder="给这组照片起个标题..."
+                placeholder="给这组照片起一个标题..."
                 placeholderTextColor="#9CA3AF"
                 value={title}
                 onChangeText={setTitle}
@@ -184,8 +242,6 @@ export default function EditCopyScreen() {
               />
               <Text style={styles.charCount}>{title.length}/15</Text>
             </View>
-
-            {/* 说明字段 — 暂时隐藏，后续再上 */}
           </View>
 
           <View style={styles.footer}>
@@ -200,6 +256,22 @@ export default function EditCopyScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.toastContainer,
+          {
+            opacity: toastOpacity,
+            transform: [{ translateY: toastTranslateY }],
+          },
+        ]}
+      >
+        <View style={styles.toastInner}>
+          <View style={styles.toastDot} />
+          <Text style={styles.toastText}>{toastMessage}</Text>
+        </View>
+      </Animated.View>
     </ScreenContainer>
   );
 }
@@ -314,10 +386,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: "#11181C",
   },
-  textArea: {
-    minHeight: 90,
-    paddingTop: 12,
-  },
   charCount: {
     fontSize: 12,
     color: "#9CA3AF",
@@ -326,5 +394,41 @@ const styles = StyleSheet.create({
   footer: {
     marginTop: 28,
     width: "100%",
+  },
+  toastContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 34,
+    alignItems: "center",
+    zIndex: 20,
+  },
+  toastInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    maxWidth: "76%",
+    backgroundColor: "rgba(17, 24, 28, 0.92)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  toastDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: "#34D399",
+  },
+  toastText: {
+    color: "#F9FAFB",
+    fontSize: 12,
+    fontWeight: "600",
   },
 });

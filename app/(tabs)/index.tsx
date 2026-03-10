@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { View, Text, StyleSheet, Pressable, Image as RNImage, Dimensions, ActivityIndicator, Modal, Platform, Alert, TextInput, KeyboardAvoidingView, ScrollView as RNScrollView } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Image } from "expo-image";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/hooks/use-auth";
@@ -34,6 +34,7 @@ const BATCH_SIZE = 50;
 const QUEUE_MAX = 200;
 const QUEUE_KEEP = 50;
 const REFILL_THRESHOLD = 5;
+const INITIAL_FETCH_TIMEOUT_MS = 12000;
 
 /** "YYYY-MM-DD" -> "YYYY年M月D日" */
 function formatVoteDate(voteDate: string): string {
@@ -53,12 +54,15 @@ interface VoteCardData {
 
 export default function ImageTestScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ cardId?: string }>();
   const insets = useSafeAreaInsets();
   const { user, loading: authLoading } = useAuth();
+  const requestedCardId = params.cardId ? parseInt(params.cardId, 10) : 0;
 
   const [currentCard, setCurrentCard] = useState<VoteCardData | null>(null);
   const [cardQueue, setCardQueue] = useState<VoteCardData[]>([]);
   const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
   const [enableNextCardPreview, setEnableNextCardPreview] = useState(true);
   const [transitionPreviewCard, setTransitionPreviewCard] = useState<VoteCardData | null>(null);
   /** 本次会话所有已入队的卡片 ID，用于服务端排重 */
@@ -120,11 +124,16 @@ export default function ImageTestScreen() {
   }, [toastOpacity, toastTranslateY]);
 
   const utils = trpc.useUtils();
+  const { data: requestedCardData, isLoading: isRequestedCardLoading } = trpc.cards.getById.useQuery(
+    { cardId: requestedCardId },
+    { enabled: requestedCardId > 0 }
+  );
 
   // ── 新手引导：仅保留首屏上滑翻页提示 ───────────────────────────────────
   const SWIPE_GUIDE_SHOWN_KEY = "@swipe_guide_shown_v1";
   const [showSwipeGuide, setShowSwipeGuide] = useState(false);
   const swipeGuideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appliedRequestedCardIdRef = useRef<number | null>(null);
 
   // 首屏「上滑翻页」指引：首次进入投票页 0.5~1 秒后显示，用户完成一次上滑后关闭
   useEffect(() => {
@@ -150,10 +159,16 @@ export default function ImageTestScreen() {
 
   const fetchBatch = useCallback(
     async (excludeCardIds: number[]): Promise<VoteCardData[]> => {
-      const batch = await utils.cards.getRandomForVotingBatch.fetch({
-        count: BATCH_SIZE,
-        excludeCardIds: excludeCardIds.length > 0 ? excludeCardIds : undefined,
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("加载超时，请检查当前后端地址或网络连接")), INITIAL_FETCH_TIMEOUT_MS);
       });
+      const batch = await Promise.race([
+        utils.cards.getRandomForVotingBatch.fetch({
+          count: BATCH_SIZE,
+          excludeCardIds: excludeCardIds.length > 0 ? excludeCardIds : undefined,
+        }),
+        timeoutPromise,
+      ]);
       const fetched = (batch as VoteCardData[]).filter((c) => c.photos && c.photos.length > 0);
       if (user) {
         fetched.forEach((card) => {
@@ -179,7 +194,10 @@ export default function ImageTestScreen() {
     async (isInitial: boolean) => {
       if (isRefillInProgress.current) return;
       isRefillInProgress.current = true;
-      if (isInitial) setQueueLoading(true);
+      if (isInitial) {
+        setQueueLoading(true);
+        setQueueError(null);
+      }
 
       try {
         let batch = await fetchBatch([...sessionQueueIdsRef.current]);
@@ -210,6 +228,8 @@ export default function ImageTestScreen() {
         }
       } catch (e) {
         console.error("Refill failed:", e);
+        const message = e instanceof Error ? e.message : "卡片加载失败，请稍后重试";
+        setQueueError(message);
       } finally {
         isRefillInProgress.current = false;
         if (isInitial) setQueueLoading(false);
@@ -218,10 +238,52 @@ export default function ImageTestScreen() {
     [fetchBatch]
   );
 
+  const resetCardViewState = useCallback(() => {
+    setEnableNextCardPreview(false);
+    setTransitionPreviewCard(null);
+    setShowResult(false);
+    setVoteResult(null);
+    setUserVotedAt(null);
+    setSelectedPhotoId(null);
+    setAllPhotoStats([]);
+    setShowComments(false);
+    setCommentText("");
+    setCommentImages([]);
+    setCommentImageUrls([]);
+    setIsFavorited(false);
+    setExpandedPhotoIndex(null);
+    cardOpacity.value = 1;
+    showNextCard.value = false;
+    translateY.value = 0;
+    requestAnimationFrame(() => setEnableNextCardPreview(true));
+  }, [cardOpacity, showNextCard, translateY]);
+
   useEffect(() => {
+    if (requestedCardId <= 0) {
+      appliedRequestedCardIdRef.current = null;
+      return;
+    }
+    if (!requestedCardData) return;
+    if (appliedRequestedCardIdRef.current === requestedCardId) return;
+
+    appliedRequestedCardIdRef.current = requestedCardId;
+    resetCardViewState();
+    setPreviousCards([]);
+    setCurrentCard(requestedCardData as VoteCardData);
+    setCardQueue((prev) => prev.filter((card) => card.id !== requestedCardId));
+    sessionQueueIdsRef.current = [
+      requestedCardId,
+      ...sessionQueueIdsRef.current.filter((id) => id !== requestedCardId),
+    ];
+  }, [requestedCardData, requestedCardId, resetCardViewState]);
+
+  useEffect(() => {
+    if (requestedCardId > 0 && appliedRequestedCardIdRef.current !== requestedCardId && isRequestedCardLoading) {
+      return;
+    }
     if (currentCard || cardQueue.length > 0 || isTransitioning) return;
     performRefill(true);
-  }, [currentCard, cardQueue.length, isTransitioning, performRefill]);
+  }, [currentCard, cardQueue.length, isTransitioning, performRefill, requestedCardId, isRequestedCardLoading]);
 
   const prefetchUpcomingCardImages = useCallback(async (cards: VoteCardData[]) => {
     const urls = cards
@@ -632,10 +694,12 @@ export default function ImageTestScreen() {
   }, [previousCards.length, isTransitioning, resetAndShowPrevious]);
 
   const canGoBack = previousCards.length > 0;
+  const showQueueError = !currentCard && !queueLoading && !isTransitioning && !!queueError;
   const showEmpty =
     !currentCard &&
     !queueLoading &&
     !isTransitioning &&
+    !queueError &&
     previousCards.length === 0;
   const showLoading = !currentCard && (queueLoading || isTransitioning);
   const canSwipePrev = canGoBack;
@@ -692,7 +756,7 @@ export default function ImageTestScreen() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <GestureDetector gesture={swipeGesture}>
-        <Animated.View ref={cardCaptureRef} style={styles.fullScreen}>
+        <Animated.View ref={cardCaptureRef} collapsable={false} style={styles.fullScreen}>
           <View style={styles.background} />
 
           <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
@@ -717,6 +781,13 @@ export default function ImageTestScreen() {
             <View style={styles.stateBox}>
               <ActivityIndicator size="large" color="#6366F1" />
               <Text style={styles.stateText}>加载中...</Text>
+            </View>
+          ) : showQueueError ? (
+            <View style={styles.stateBox}>
+              <Text style={styles.stateText}>{queueError}</Text>
+              <Pressable onPress={() => performRefill(true)} style={styles.backToPrevBtn}>
+                <Text style={styles.backToPrevText}>重新加载</Text>
+              </Pressable>
             </View>
           ) : !currentCard && previousCards.length > 0 && !queueLoading && !isTransitioning ? (
             <View style={styles.stateBox}>

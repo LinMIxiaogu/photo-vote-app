@@ -350,7 +350,7 @@ export default function MeScreen() {
     undefined,
     { enabled: !!user }
   );
-  const pendingCards = myCards?.filter((c) => !c.isCompleted).length ?? 0;
+  const pendingCards = myCards?.filter((c) => c.moderationStatus !== "approved").length ?? 0;
 
   const haptic = () => {
     if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

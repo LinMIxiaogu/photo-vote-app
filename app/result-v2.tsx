@@ -3,23 +3,31 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
+  Image as RNImage,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Clipboard from "expo-clipboard";
 import { Image } from "expo-image";
+import * as Linking from "expo-linking";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
+import * as MediaLibrary from "expo-media-library";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
+import { captureRef } from "react-native-view-shot";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ScreenContainer } from "@/components/screen-container";
@@ -31,6 +39,7 @@ import { trpc } from "@/lib/trpc";
 import { getImageUrl } from "@/lib/utils";
 
 const SKIP_VOTE_REDIRECT_KEY = "@skip_vote_redirect";
+const shareIcon = require("@/assets/images/share-icon.png");
 
 type CommentItem = {
   id: number;
@@ -70,6 +79,7 @@ export default function ResultScreenV2() {
   const fromFavorites = params.from === "favorites";
 
   const scrollRef = useRef<ScrollView>(null);
+  const sharePosterRef = useRef<View>(null);
   const inputRef = useRef<TextInput>(null);
   const isPickingImageRef = useRef(false);
 
@@ -84,18 +94,48 @@ export default function ResultScreenV2() {
   const [expandedReplies, setExpandedReplies] = useState<Record<number, ReplyBlock>>({});
   const [loadingReplies, setLoadingReplies] = useState<Record<number, boolean>>({});
   const [replyingTo, setReplyingTo] = useState<{ parentCommentId: number; userName: string; replyToUserId?: number | null } | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [showShareSheet, setShowShareSheet] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const accessRedirectedRef = useRef(false);
+  const toastOpacity = useSharedValue(0);
+  const toastTranslateY = useSharedValue(30);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: toastOpacity.value,
+    transform: [{ translateY: toastTranslateY.value }],
+  }));
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastOpacity.value = withTiming(1, { duration: 220 });
+    toastTranslateY.value = withSpring(0, { damping: 14, stiffness: 160 });
+    toastTimeoutRef.current = setTimeout(() => {
+      toastOpacity.value = withTiming(0, { duration: 300 });
+      toastTranslateY.value = withTiming(16, { duration: 300 });
+    }, 2000);
+  }, [toastOpacity, toastTranslateY]);
 
   const utils = trpc.useUtils();
-  const { data: card } = trpc.cards.getById.useQuery({ cardId }, { enabled: cardId > 0 });
+  const { data: card, isLoading: isCardLoading } = trpc.cards.getById.useQuery({ cardId }, { enabled: cardId > 0 });
+  const { data: myVoteResultData, isLoading: isVoteResultLoading } = trpc.votes.myVoteResult.useQuery(
+    { cardId },
+    { enabled: cardId > 0 && !!user },
+  );
   const { data: commentsData, refetch: refetchComments } = trpc.comments.getByCardId.useQuery(
     { cardId },
     { enabled: cardId > 0 && !!user },
   );
-  const { data: favoriteData } = trpc.favorites.check.useQuery({ cardId }, { enabled: cardId > 0 && !!user });
+  const { data: favoriteData, isLoading: isFavoriteLoading } = trpc.favorites.check.useQuery(
+    { cardId },
+    { enabled: cardId > 0 && !!user },
+  );
   const { data: favoriteCountData } = trpc.favorites.count.useQuery({ cardId }, { enabled: cardId > 0 });
 
   const isFavorited = favoriteData?.isFavorited ?? false;
   const comments = (commentsData?.comments ?? []) as CommentItem[];
+  const isOwner = !!user && !!card && card.userId === user.id;
+  const canAccessResult = !!card && !!user && (isOwner || !!myVoteResultData || isFavorited);
 
   const toggleFavoriteMutation = trpc.favorites.toggle.useMutation({
     onSuccess: async (data) => {
@@ -138,9 +178,13 @@ export default function ResultScreenV2() {
   });
   const canSendComment = !!user && (!!commentText.trim() || commentImageUrls.length > 0) && !createCommentMutation.isPending && !commentUploading;
 
-  const sortedPhotos = useMemo(() => (card ? [...card.photos].sort((a, b) => b.voteCount - a.voteCount) : []), [card]);
-  const topPhoto = sortedPhotos[0];
-  const totalVotes = useMemo(() => sortedPhotos.reduce((sum, item) => sum + item.voteCount, 0), [sortedPhotos]);
+  const displayPhotos = useMemo(() => (card ? [...card.photos].sort((a, b) => a.photoIndex - b.photoIndex) : []), [card]);
+  const totalVotes = useMemo(() => displayPhotos.reduce((sum, item) => sum + item.voteCount, 0), [displayPhotos]);
+  const leaderVoteCount = useMemo(() => displayPhotos.reduce((max, item) => Math.max(max, item.voteCount), 0), [displayPhotos]);
+  const leadingPhoto = useMemo(() => {
+    if (displayPhotos.length === 0) return null;
+    return displayPhotos.reduce((leader, photo) => (photo.voteCount > leader.voteCount ? photo : leader), displayPhotos[0]);
+  }, [displayPhotos]);
   const commentCount = comments.length;
 
   const handleBack = useCallback(() => {
@@ -151,6 +195,91 @@ export default function ResultScreenV2() {
     AsyncStorage.setItem(SKIP_VOTE_REDIRECT_KEY, "1").catch(console.error);
     router.replace("/");
   }, [fromFavorites, router]);
+
+  const handleShare = useCallback(async () => {
+    if (!card) return;
+    const base = getApiBaseUrl();
+    const url = `${base}/share/card/${card.id}`;
+    const title = card.title?.trim() || "来看看这次投票结果";
+
+    try {
+      await Share.share({
+        title,
+        message: `${title} ${url}`,
+        url,
+      });
+    } catch (error) {
+      console.error("[result-share] share failed", error);
+      Alert.alert("分享失败", "请稍后重试。");
+    }
+  }, [card]);
+
+  const handleOpenShareSheet = useCallback(async () => {
+    if (!card || isSharing) return;
+    setShowShareSheet(true);
+  }, [card, isSharing]);
+
+  const closeShareSheet = useCallback(() => setShowShareSheet(false), []);
+
+  const shareToXiaohongshu = useCallback(async () => {
+    closeShareSheet();
+    if (!sharePosterRef.current) return;
+    try {
+      setIsSharing(true);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const posterUri = await captureRef(sharePosterRef, {
+        format: "jpg",
+        quality: 0.92,
+        result: "tmpfile",
+        width: 1080,
+        height: 1620,
+      });
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("需要相册权限", "请在设置中允许访问相册。");
+        return;
+      }
+      await MediaLibrary.saveToLibraryAsync(posterUri);
+      const xhsScheme = "xhsdiscover://post/";
+      const canOpen = await Linking.canOpenURL(xhsScheme);
+      if (canOpen) {
+        await Linking.openURL(xhsScheme);
+      } else {
+        Alert.alert("截图已保存", "请打开小红书，从相册选择刚保存的图片发布。");
+      }
+    } catch (error) {
+      console.error("[result-share] xiaohongshu failed", error);
+      Alert.alert("分享失败", "请稍后重试。");
+    } finally {
+      setIsSharing(false);
+    }
+  }, [closeShareSheet]);
+
+  const copyShareLink = useCallback(async () => {
+    closeShareSheet();
+    if (!card) return;
+    const base = getApiBaseUrl();
+    const url = `${base}/share/card/${card.id}`;
+    const title = card.title?.trim() || "来看看这次投票结果";
+    const text = `${title} ${url}\n复制后打开「一选」参与投票！`;
+    await Clipboard.setStringAsync(text);
+    showToast("链接已复制到剪贴板");
+  }, [card, closeShareSheet, showToast]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (accessRedirectedRef.current || cardId <= 0 || isCardLoading) return;
+    if (user && (isVoteResultLoading || isFavoriteLoading)) return;
+    if (!card || canAccessResult) return;
+
+    accessRedirectedRef.current = true;
+    router.replace({ pathname: "/(tabs)", params: { cardId: String(cardId) } });
+  }, [canAccessResult, card, cardId, isCardLoading, isFavoriteLoading, isVoteResultLoading, router, user]);
 
   useFocusEffect(
     useCallback(() => {
@@ -308,7 +437,7 @@ export default function ResultScreenV2() {
     };
   }, []);
 
-  if (!card) {
+  if (!card || (user && !canAccessResult && (isVoteResultLoading || isFavoriteLoading))) {
     return (
       <ScreenContainer className="flex-1 items-center justify-center" style={{ backgroundColor: "#FFFFFF" }}>
         <ActivityIndicator size="large" color="#C85C3C" />
@@ -325,6 +454,32 @@ export default function ResultScreenV2() {
         keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
       >
         <View style={styles.flex}>
+          <View style={styles.topBar}>
+            <Pressable onPress={handleBack} style={styles.headerIconButton} hitSlop={8}>
+              <Text style={styles.headerBackText}>‹</Text>
+            </Pressable>
+            <View style={styles.headerIdentity}>
+              <View style={styles.headerAvatar}>
+                {card.userAvatarUrl ? (
+                  <Image source={{ uri: getImageUrl(card.userAvatarUrl) }} style={styles.avatarImage} contentFit="cover" />
+                ) : (
+                  <Text style={styles.headerAvatarPlaceholder}>{getInitials(card.userName ?? "匿名发布")}</Text>
+                )}
+              </View>
+              <View style={styles.headerIdentityText}>
+                <Text style={styles.headerName} numberOfLines={1}>
+                  {card.userName ?? "匿名发布"}
+                </Text>
+              </View>
+            </View>
+            <Pressable onPress={handleOpenShareSheet} style={styles.headerIconButton} hitSlop={8} disabled={isSharing}>
+              {isSharing ? (
+                <ActivityIndicator size="small" color="#27211B" />
+              ) : (
+                <RNImage source={shareIcon} style={styles.headerShareIcon} resizeMode="contain" />
+              )}
+            </Pressable>
+          </View>
           <ScrollView
             ref={scrollRef}
             showsVerticalScrollIndicator={false}
@@ -353,31 +508,27 @@ export default function ResultScreenV2() {
             </View>
 
             <View style={styles.heroCard}>
-              {topPhoto ? <Image source={{ uri: getImageUrl(topPhoto.url) }} style={styles.heroImage} contentFit="cover" /> : <View style={styles.heroImageFallback} />}
+              {leadingPhoto ? <Image source={{ uri: getImageUrl(leadingPhoto.url) }} style={styles.heroImage} contentFit="cover" /> : <View style={styles.heroImageFallback} />}
             </View>
 
             <View style={styles.sectionDivider} />
 
             <View style={styles.section}>
-              <View style={styles.sectionTitleRow}>
+              <View style={[styles.sectionTitleRow, styles.sectionTitleRowSplit]}>
                 <Text style={styles.sectionTitle}>投票结果</Text>
                 <Text style={styles.sectionMeta}>{totalVotes} 人参与</Text>
               </View>
               <View style={styles.resultList}>
-                {sortedPhotos.map((photo, index) => {
+                {displayPhotos.map((photo) => {
                   const percentage = totalVotes > 0 ? Math.round((photo.voteCount / totalVotes) * 100) : 0;
-                  const isLeader = index === 0;
+                  const isLeader = leaderVoteCount > 0 && photo.voteCount === leaderVoteCount;
                   return (
                     <View key={photo.id} style={styles.resultRow}>
                       <View style={styles.resultThumbWrap}>
                         <Image source={{ uri: getImageUrl(photo.url) }} style={styles.resultThumb} contentFit="cover" />
-                        <View style={[styles.rankDot, isLeader && styles.rankDotLeader]}>
-                          <Text style={[styles.rankDotText, isLeader && styles.rankDotTextLeader]}>{index + 1}</Text>
-                        </View>
                       </View>
                       <View style={styles.resultMain}>
                         <View style={styles.resultLabels}>
-                          <Text style={styles.resultLabel}>选项 {photo.photoIndex + 1}</Text>
                           <Text style={styles.resultValue}>{percentage}%</Text>
                         </View>
                         <View style={styles.resultTrack}>
@@ -413,7 +564,6 @@ export default function ResultScreenV2() {
               {!commentsData?.canView ? (
                 <View style={styles.commentNotice}>
                   <Text style={styles.commentNoticeTitle}>参与投票或收藏后可查看评论</Text>
-                  <Text style={styles.commentNoticeText}>当前评论权限规则与旧页面保持一致。</Text>
                 </View>
               ) : commentCount === 0 ? (
                 <View style={styles.commentNotice}>
@@ -625,6 +775,85 @@ export default function ResultScreenV2() {
           </View>
         </View>
       </KeyboardAvoidingView>
+      <View pointerEvents="none" style={styles.sharePosterStage}>
+        <View ref={sharePosterRef} collapsable={false} style={styles.sharePosterCard}>
+          <View style={styles.sharePosterHero}>
+            <View style={styles.sharePosterHeroFrame}>
+              {leadingPhoto ? (
+                <Image source={{ uri: getImageUrl(leadingPhoto.url) }} style={styles.sharePosterHeroImage} contentFit="contain" />
+              ) : (
+                <View style={styles.sharePosterHeroFallback} />
+              )}
+            </View>
+          </View>
+          <View style={styles.sharePosterBody}>
+            <View style={[styles.sectionTitleRow, styles.sectionTitleRowSplit]}>
+              <Text style={styles.sharePosterTitle}>投票结果</Text>
+              <Text style={styles.sharePosterMeta}>{totalVotes} 人参与</Text>
+            </View>
+            <View style={styles.sharePosterResultList}>
+              {displayPhotos.map((photo) => {
+                const percentage = totalVotes > 0 ? Math.round((photo.voteCount / totalVotes) * 100) : 0;
+                const isLeader = leaderVoteCount > 0 && photo.voteCount === leaderVoteCount;
+                return (
+                  <View key={`share-${photo.id}`} style={styles.sharePosterResultRow}>
+                    <View style={styles.sharePosterThumbWrap}>
+                      <View style={styles.sharePosterThumbFrame}>
+                        <Image source={{ uri: getImageUrl(photo.url) }} style={styles.sharePosterThumb} contentFit="contain" />
+                      </View>
+                    </View>
+                    <View style={styles.sharePosterResultMain}>
+                      <View style={styles.resultLabels}>
+                        <Text style={styles.sharePosterOptionLabel}>选项 {photo.photoIndex + 1}</Text>
+                        <Text style={styles.resultValue}>{percentage}%</Text>
+                      </View>
+                      <View style={styles.resultTrack}>
+                        <View style={[styles.resultFill, isLeader ? styles.resultFillLeader : styles.resultFillDefault, { width: `${Math.max(percentage, 6)}%` }]} />
+                      </View>
+                    </View>
+                    <Text style={styles.sharePosterVotes}>{photo.voteCount}票</Text>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      </View>
+      <Modal visible={showShareSheet} transparent animationType="slide" onRequestClose={closeShareSheet}>
+        <Pressable style={styles.shareSheetOverlay} onPress={closeShareSheet}>
+          <Pressable style={[styles.shareSheetContainer, { paddingBottom: insets.bottom + 20 }]} onPress={() => {}}>
+            <View style={styles.shareSheetHandleWrap}>
+              <View style={styles.shareSheetHandle} />
+            </View>
+            <Text style={styles.shareSheetSectionTitle}>分享至</Text>
+            <View style={styles.shareOptionsRow}>
+              <Pressable style={styles.shareOption} onPress={shareToXiaohongshu}>
+                <View style={[styles.shareOptionIcon, { backgroundColor: "#FF2442" }]}>
+                  <Text style={styles.shareOptionIconText}>书</Text>
+                </View>
+                <Text style={styles.shareOptionLabel}>小红书</Text>
+              </Pressable>
+              <Pressable style={styles.shareOption} onPress={copyShareLink}>
+                <View style={[styles.shareOptionIcon, { backgroundColor: "#4B5563" }]}>
+                  <IconSymbol name="link" size={24} color="#ffffff" />
+                </View>
+                <Text style={styles.shareOptionLabel}>复制链接</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.toastContainer, { bottom: insets.bottom + 48 }, toastAnimatedStyle]}
+      >
+        <View style={styles.toastInner}>
+          <View style={styles.toastIconWrap}>
+            <IconSymbol name="checkmark.circle.fill" size={18} color="#22C55E" />
+          </View>
+          <Text style={styles.toastText}>{toastMessage}</Text>
+        </View>
+      </Animated.View>
     </ScreenContainer>
   );
 }
@@ -633,22 +862,35 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   screen: { backgroundColor: "#FFFFFF" },
   loadingText: { marginTop: 12, fontSize: 15, color: "#7A6C61" },
-  scrollContent: { paddingTop: 8, paddingBottom: 220 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 18, paddingBottom: 14 },
-  headerIconButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
+  scrollContent: { paddingBottom: 220 },
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#ECE7E0",
+    backgroundColor: "rgba(255,255,255,0.96)",
+  },
+  header: { display: "none" },
+  headerIconButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  headerShareIcon: { width: 18, height: 18, tintColor: "#27211B" },
   headerBackText: { fontSize: 34, lineHeight: 34, color: "#27211B", marginTop: -2 },
-  headerIdentity: { flexDirection: "row", alignItems: "center", flex: 1, marginLeft: 8 },
-  headerAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#F3E7D8", alignItems: "center", justifyContent: "center" },
+  headerIdentity: { flexDirection: "row", alignItems: "center", flex: 1, marginHorizontal: 8, minWidth: 0 },
+  headerAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#F3E7D8", alignItems: "center", justifyContent: "center", overflow: "hidden" },
   headerAvatarPlaceholder: { fontSize: 18, fontWeight: "700", color: "#8A4B38" },
-  headerIdentityText: { marginLeft: 12 },
+  headerIdentityText: { marginLeft: 12, flex: 1 },
   headerName: { fontSize: 16, fontWeight: "400", color: "#27211B" },
-  headerSpacer: { width: 42 },
+  headerSpacer: { display: "none" },
   sectionDivider: { height: StyleSheet.hairlineWidth, backgroundColor: "#ECE7E0", marginHorizontal: 18 },
   heroCard: { position: "relative", overflow: "hidden", backgroundColor: "#E9DFCF", minHeight: 320 },
   heroImage: { width: "100%", height: 320 },
   heroImageFallback: { height: 320, backgroundColor: "#E5D7C1" },
   section: { paddingHorizontal: 18, paddingVertical: 18, gap: 14 },
   sectionTitleRow: { flexDirection: "row", alignItems: "center" },
+  sectionTitleRowSplit: { justifyContent: "space-between" },
   sectionTitle: { fontSize: 24, fontWeight: "800", color: "#27211B" },
   sectionMeta: { fontSize: 13, color: "#8C877F" },
   sectionMetaLarge: { fontSize: 16, fontWeight: "600", color: "#27211B" },
@@ -656,13 +898,8 @@ const styles = StyleSheet.create({
   resultRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   resultThumbWrap: { width: 58, height: 58, position: "relative" },
   resultThumb: { width: 58, height: 58, borderRadius: 16 },
-  rankDot: { position: "absolute", top: -5, right: -5, width: 22, height: 22, borderRadius: 11, backgroundColor: "#F0E3D0", alignItems: "center", justifyContent: "center" },
-  rankDotLeader: { backgroundColor: "#C85C3C" },
-  rankDotText: { fontSize: 11, fontWeight: "800", color: "#8A4B38" },
-  rankDotTextLeader: { color: "#FFF8EF" },
   resultMain: { flex: 1, gap: 8 },
   resultLabels: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  resultLabel: { fontSize: 14, fontWeight: "600", color: "#544A42" },
   resultValue: { fontSize: 16, fontWeight: "800", color: "#27211B" },
   resultTrack: { height: 10, borderRadius: 999, backgroundColor: "#EFE4D6", overflow: "hidden" },
   resultFill: { height: "100%", borderRadius: 999 },
@@ -682,12 +919,21 @@ const styles = StyleSheet.create({
   commentHeader: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
   commentIdentity: { flexDirection: "row", alignItems: "center", flex: 1 },
   commentAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#D8C9B7", alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  avatarImage: { width: "100%", height: "100%" },
+  avatarImage: { width: "100%", height: "100%", borderRadius: 999 },
   commentAvatarText: { fontSize: 12, fontWeight: "800", color: "#5A4B3D" },
   commentIdentityText: { marginLeft: 10, flex: 1, gap: 2 },
   commentNameRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   commentName: { fontSize: 15, fontWeight: "700", color: "#27211B" },
-  authorText: { fontSize: 12, color: "#C85C3C" },
+  authorText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#FFF8EF",
+    backgroundColor: "#C85C3C",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
   commentTime: { fontSize: 12, color: "#8C877F" },
   replyInlineAction: { alignSelf: "flex-start" },
   replyActionText: { fontSize: 12, fontWeight: "600", color: "#8A4B38" },
@@ -729,4 +975,83 @@ const styles = StyleSheet.create({
   sendTextButtonActive: { backgroundColor: "#E97F98" },
   sendTextButtonDisabled: { backgroundColor: "#E7D4D8" },
   sendTextButtonLabel: { fontSize: 16, fontWeight: "700", color: "#FFF7EE" },
+  sharePosterStage: {
+    position: "absolute",
+    left: -9999,
+    top: 0,
+    opacity: 1,
+  },
+  sharePosterCard: {
+    width: 360,
+    backgroundColor: "#FFF8EF",
+    borderRadius: 32,
+    overflow: "hidden",
+  },
+  sharePosterHero: {
+    position: "relative",
+    backgroundColor: "#F3E7D8",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+  },
+  sharePosterHeroFrame: {
+    width: "100%",
+    height: 380,
+    borderRadius: 24,
+    backgroundColor: "#FFFDF8",
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  sharePosterHeroImage: { width: "100%", height: "100%" },
+  sharePosterHeroFallback: { width: "100%", height: "100%", backgroundColor: "#F1E6D8", borderRadius: 18 },
+  sharePosterBody: { paddingHorizontal: 22, paddingVertical: 22, gap: 16 },
+  sharePosterTitle: { fontSize: 26, fontWeight: "800", color: "#27211B" },
+  sharePosterMeta: { fontSize: 13, color: "#8C877F" },
+  sharePosterResultList: { gap: 14 },
+  sharePosterResultRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  sharePosterThumbWrap: {
+    width: 74,
+    height: 74,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sharePosterThumbFrame: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 16,
+    backgroundColor: "#FFFDF8",
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 6,
+  },
+  sharePosterThumb: { width: "100%", height: "100%" },
+  sharePosterResultMain: { flex: 1, gap: 8 },
+  sharePosterVotes: { width: 42, textAlign: "right", fontSize: 13, color: "#8C877F" },
+  sharePosterOptionLabel: { fontSize: 14, fontWeight: "600", color: "#544A42" },
+  shareSheetOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "flex-end" },
+  shareSheetContainer: { backgroundColor: "#FFFFFF", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20 },
+  shareSheetHandleWrap: { alignItems: "center", paddingVertical: 12 },
+  shareSheetHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: "#DDD6CE" },
+  shareSheetSectionTitle: { color: "#8C877F", fontSize: 13, textAlign: "center", marginBottom: 20 },
+  shareOptionsRow: { flexDirection: "row", justifyContent: "center", gap: 48, marginBottom: 28 },
+  shareOption: { alignItems: "center", gap: 8, width: 68 },
+  shareOptionIcon: { width: 56, height: 56, borderRadius: 28, justifyContent: "center", alignItems: "center" },
+  shareOptionIconText: { color: "#FFFFFF", fontSize: 20, fontWeight: "700" },
+  shareOptionLabel: { color: "#5D5147", fontSize: 12, textAlign: "center" },
+  toastContainer: { position: "absolute", left: 0, right: 0, alignItems: "center", zIndex: 1000 },
+  toastInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(28,28,30,0.92)",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    maxWidth: "82%",
+  },
+  toastIconWrap: { marginRight: 8 },
+  toastText: { color: "#FFFFFF", fontSize: 14, fontWeight: "600" },
 });
