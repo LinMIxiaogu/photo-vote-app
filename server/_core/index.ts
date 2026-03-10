@@ -10,6 +10,7 @@ import { createContext } from "./context";
 import { getCardById, getPhotosByCardId } from "../db";
 import { sdk } from "./sdk";
 import { storagePut } from "../storage";
+import { APP_DEEP_LINK_SCHEME } from "../../shared/app-identity";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -30,12 +31,19 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+function escHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
   const host = process.env.HOST || "0.0.0.0";
 
-  // Enable CORS for all routes - reflect the request origin to support credentials
   app.use((req, res, next) => {
     const origin = req.headers.origin;
     if (origin) {
@@ -48,7 +56,6 @@ async function startServer() {
     );
     res.header("Access-Control-Allow-Credentials", "true");
 
-    // Handle preflight requests
     if (req.method === "OPTIONS") {
       res.sendStatus(200);
       return;
@@ -58,9 +65,7 @@ async function startServer() {
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
-  // Serve uploaded files
-  app.use('/uploads', express.static('uploads'));
+  app.use("/uploads", express.static("uploads"));
 
   registerOAuthRoutes(app);
   registerAdminRoutes(app);
@@ -69,18 +74,26 @@ async function startServer() {
     res.json({ ok: true, timestamp: Date.now() });
   });
 
-  // 分享页：/share/card/:id  返回带 Open Graph 标签的 HTML 预览页
   app.get("/share/card/:id", async (req, res) => {
     const cardId = parseInt(req.params.id, 10);
-    if (isNaN(cardId)) { res.status(400).send("Invalid card id"); return; }
+    if (isNaN(cardId)) {
+      res.status(400).send("Invalid card id");
+      return;
+    }
 
     const card = await getCardById(cardId);
-    if (!card) { res.status(404).send("Card not found"); return; }
+    if (!card) {
+      res.status(404).send("Card not found");
+      return;
+    }
 
     const cardPhotos = await getPhotosByCardId(cardId);
+    const baseUrl = (
+      process.env.PUBLIC_BASE_URL ??
+      process.env.EXPO_PUBLIC_API_BASE_URL ??
+      `${req.protocol}://${req.get("host")}`
+    ).replace(/\/+$/, "");
 
-    // 将第一张图片的相对路径转为绝对 URL
-    const baseUrl = (process.env.PUBLIC_BASE_URL ?? process.env.EXPO_PUBLIC_API_BASE_URL ?? `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
     const firstPhotoUrl = (() => {
       const raw = cardPhotos[0]?.url ?? "";
       if (!raw) return "";
@@ -89,9 +102,14 @@ async function startServer() {
     })();
 
     const title = card.title ?? "来参与投票吧";
-    const desc = `「${title}」- 快来「一选」参与这个有趣的投票！`;
+    const desc = `「${title}」正在投票中，打开一选参与这个有趣的选择。`;
     const photoCount = cardPhotos.length;
     const shareUrl = `${baseUrl}/share/card/${cardId}`;
+    const appDeepLink = `${APP_DEEP_LINK_SCHEME}://vote-flow?cardId=${cardId}`;
+    const iosDownloadUrl = process.env.IOS_APP_DOWNLOAD_URL?.trim() || "";
+    const androidDownloadUrl = process.env.ANDROID_APP_DOWNLOAD_URL?.trim() || "";
+    const genericDownloadUrl = process.env.APP_DOWNLOAD_URL?.trim() || "";
+    const fallbackDownloadUrl = genericDownloadUrl || iosDownloadUrl || androidDownloadUrl || shareUrl;
 
     const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -99,22 +117,17 @@ async function startServer() {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>${escHtml(title)} - 一选</title>
-
-  <!-- Open Graph（微信/QQ 链接预览） -->
-  <meta property="og:type"        content="website" />
-  <meta property="og:url"         content="${escHtml(shareUrl)}" />
-  <meta property="og:title"       content="${escHtml(title)} - 一选" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="${escHtml(shareUrl)}" />
+  <meta property="og:title" content="${escHtml(`${title} - 一选`)}" />
   <meta property="og:description" content="${escHtml(desc)}" />
   ${firstPhotoUrl ? `<meta property="og:image" content="${escHtml(firstPhotoUrl)}" />` : ""}
-  <meta property="og:image:width"  content="600" />
+  <meta property="og:image:width" content="600" />
   <meta property="og:image:height" content="600" />
-
-  <!-- Twitter Card -->
-  <meta name="twitter:card"        content="summary_large_image" />
-  <meta name="twitter:title"       content="${escHtml(title)}" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escHtml(title)}" />
   <meta name="twitter:description" content="${escHtml(desc)}" />
   ${firstPhotoUrl ? `<meta name="twitter:image" content="${escHtml(firstPhotoUrl)}" />` : ""}
-
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#1a1a2e;color:#fff;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px}
@@ -130,6 +143,7 @@ async function startServer() {
     .subtitle{font-size:14px;color:rgba(255,255,255,0.55);margin-bottom:24px}
     .btn{display:inline-block;background:#6366F1;color:#fff;text-decoration:none;border-radius:50px;padding:14px 36px;font-size:16px;font-weight:600}
     .btn:active{opacity:.85}
+    .hint{margin-top:12px;font-size:12px;color:rgba(255,255,255,0.35);line-height:1.6}
     .footer{margin-top:24px;font-size:12px;color:rgba(255,255,255,0.25)}
   </style>
 </head>
@@ -138,16 +152,72 @@ async function startServer() {
     <p class="app-name">一选</p>
     ${photoCount > 0 ? `
     <div class="photos n${Math.min(photoCount, 4)}">
-      ${cardPhotos.slice(0, 4).map(p => {
-        const imgUrl = /^https?:\/\//i.test(p.url) ? p.url : `${baseUrl}${p.url.startsWith("/") ? "" : "/"}${p.url}`;
-        return `<img src="${escHtml(imgUrl)}" alt="投票图片" loading="lazy" />`;
-      }).join("\n      ")}
+      ${cardPhotos
+        .slice(0, 4)
+        .map((photo) => {
+          const imgUrl = /^https?:\/\//i.test(photo.url)
+            ? photo.url
+            : `${baseUrl}${photo.url.startsWith("/") ? "" : "/"}${photo.url}`;
+          return `<img src="${escHtml(imgUrl)}" alt="投票图片" loading="lazy" />`;
+        })
+        .join("\n      ")}
     </div>` : ""}
     <h1 class="title">${escHtml(title)}</h1>
-    <p class="subtitle">共 ${photoCount} 张图，来参与投票吧！</p>
-    <a class="btn" href="${escHtml(shareUrl)}">打开 App 参与投票</a>
+    <p class="subtitle">共 ${photoCount} 张图，打开一选参与投票。</p>
+    <a class="btn" id="open-app-btn" href="${escHtml(appDeepLink)}">打开 App 参与投票</a>
+    <p class="hint">已安装一选会直接打开对应卡片；未安装时会跳转到下载页。</p>
   </div>
-  <p class="footer">一选 · 颜值投票</p>
+  <p class="footer">一选 · 表达你的立场</p>
+  <script>
+    (function () {
+      var deepLink = ${JSON.stringify(appDeepLink)};
+      var iosDownloadUrl = ${JSON.stringify(iosDownloadUrl)};
+      var androidDownloadUrl = ${JSON.stringify(androidDownloadUrl)};
+      var genericDownloadUrl = ${JSON.stringify(genericDownloadUrl)};
+      var fallbackDownloadUrl = ${JSON.stringify(fallbackDownloadUrl)};
+      var hasNavigated = false;
+      var timer = null;
+
+      function getDownloadUrl() {
+        var ua = navigator.userAgent || "";
+        if (/Android/i.test(ua) && androidDownloadUrl) return androidDownloadUrl;
+        if (/iPhone|iPad|iPod/i.test(ua) && iosDownloadUrl) return iosDownloadUrl;
+        return genericDownloadUrl || fallbackDownloadUrl;
+      }
+
+      function cancelFallback() {
+        hasNavigated = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      }
+
+      function openAppWithFallback() {
+        if (hasNavigated) return;
+        timer = window.setTimeout(function () {
+          if (hasNavigated) return;
+          window.location.href = getDownloadUrl();
+        }, 1500);
+        window.location.href = deepLink;
+      }
+
+      var button = document.getElementById("open-app-btn");
+      if (button) {
+        button.addEventListener("click", function (event) {
+          event.preventDefault();
+          openAppWithFallback();
+        });
+      }
+
+      window.addEventListener("pagehide", cancelFallback);
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "hidden") {
+          cancelFallback();
+        }
+      });
+    })();
+  </script>
 </body>
 </html>`;
 
@@ -155,21 +225,31 @@ async function startServer() {
     res.send(html);
   });
 
-  // 通用图片上传接口：接收 base64，上传到 OSS，返回 URL
   app.post("/api/upload", async (req, res) => {
     try {
       const user = await sdk.authenticateRequest(req);
-      if (!user) { res.status(401).json({ error: "Unauthorized" }); return; }
+      if (!user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
     } catch {
-      res.status(401).json({ error: "Unauthorized" }); return;
+      res.status(401).json({ error: "Unauthorized" });
+      return;
     }
 
-    const { base64, mimeType, directory } = req.body as { base64?: string; mimeType?: string; directory?: string };
+    const { base64, mimeType, directory } = req.body as {
+      base64?: string;
+      mimeType?: string;
+      directory?: string;
+    };
+
     if (!base64 || !mimeType) {
-      res.status(400).json({ error: "base64 and mimeType are required" }); return;
+      res.status(400).json({ error: "base64 and mimeType are required" });
+      return;
     }
     if (base64.length > 5_000_000) {
-      res.status(413).json({ error: "Image too large" }); return;
+      res.status(413).json({ error: "Image too large" });
+      return;
     }
 
     try {
@@ -210,7 +290,3 @@ async function startServer() {
 }
 
 startServer().catch(console.error);
-
-function escHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}

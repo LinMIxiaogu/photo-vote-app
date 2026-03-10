@@ -516,12 +516,16 @@ export default function ImageTestScreen() {
         return;
       }
       await MediaLibrary.saveToLibraryAsync(shareThumbnail);
-      const xhsScheme = "xhsdiscover://post/";
+      const xhsScheme = "xhsdiscover://post";
       const canOpen = await Linking.canOpenURL(xhsScheme);
-      if (canOpen) {
+      if (!canOpen) {
+        Alert.alert("截图已保存", "请打开小红书 App，从相册选择刚保存的图片发布笔记。");
+        return;
+      }
+      try {
         await Linking.openURL(xhsScheme);
-      } else {
-        Alert.alert("截图已保存", "请打开小红书 App 从相册选择图片发布笔记。");
+      } catch {
+        Alert.alert("截图已保存", "未能自动打开小红书，请从相册选择刚保存的图片发布笔记。");
       }
     } catch {
       Alert.alert("分享失败", "请稍后重试。");

@@ -240,12 +240,16 @@ export default function ResultScreenV2() {
         return;
       }
       await MediaLibrary.saveToLibraryAsync(posterUri);
-      const xhsScheme = "xhsdiscover://post/";
+      const xhsScheme = "xhsdiscover://post";
       const canOpen = await Linking.canOpenURL(xhsScheme);
-      if (canOpen) {
-        await Linking.openURL(xhsScheme);
-      } else {
+      if (!canOpen) {
         Alert.alert("截图已保存", "请打开小红书，从相册选择刚保存的图片发布。");
+        return;
+      }
+      try {
+        await Linking.openURL(xhsScheme);
+      } catch {
+        Alert.alert("截图已保存", "未能自动打开小红书，请从相册选择刚保存的图片发布。");
       }
     } catch (error) {
       console.error("[result-share] xiaohongshu failed", error);
