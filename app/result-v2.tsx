@@ -77,6 +77,7 @@ export default function ResultScreenV2() {
   const params = useLocalSearchParams<{ cardId: string; from?: string }>();
   const cardId = params.cardId ? parseInt(params.cardId, 10) : 0;
   const fromFavorites = params.from === "favorites";
+  const fromVoteFlow = params.from === "vote-flow";
 
   const scrollRef = useRef<ScrollView>(null);
   const sharePosterRef = useRef<View>(null);
@@ -188,13 +189,13 @@ export default function ResultScreenV2() {
   const commentCount = comments.length;
 
   const handleBack = useCallback(() => {
-    if (fromFavorites) {
+    if (fromFavorites || fromVoteFlow) {
       router.back();
       return;
     }
     AsyncStorage.setItem(SKIP_VOTE_REDIRECT_KEY, "1").catch(console.error);
     router.replace("/");
-  }, [fromFavorites, router]);
+  }, [fromFavorites, fromVoteFlow, router]);
 
   const handleShare = useCallback(async () => {
     if (!card) return;
@@ -241,7 +242,7 @@ export default function ResultScreenV2() {
       }
       await MediaLibrary.saveToLibraryAsync(posterUri);
       const xhsScheme = "xhsdiscover://post";
-      const canOpen = await Linking.canOpenURL(xhsScheme);
+      const canOpen = Platform.OS === "android" ? true : await Linking.canOpenURL(xhsScheme);
       if (!canOpen) {
         Alert.alert("截图已保存", "请打开小红书，从相册选择刚保存的图片发布。");
         return;

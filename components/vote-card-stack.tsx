@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Dimensions, type GestureResponderEvent } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import { Image } from "expo-image";
@@ -6,6 +6,7 @@ import { getImageUrl } from "@/lib/utils";
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 const TAP_MOVE_TOLERANCE = 12;
+const loadedVotePhotoUris = new Set<string>();
 
 type VotePhoto = {
   id: number;
@@ -128,20 +129,7 @@ function VoteCardContent({
         style={styles.photoCardPressable}
       >
         <View style={styles.photoImageWrap}>
-          <Image
-            source={{ uri: getImageUrl(photo.url) }}
-            style={styles.photoImage}
-            contentFit="cover"
-            transition={0}
-            cachePolicy="memory-disk"
-            onError={(e) => {
-              console.warn("[vote-flow] image load failed", {
-                photoId: photo.id,
-                url: getImageUrl(photo.url),
-                error: e,
-              });
-            }}
-          />
+          <MemoVotePhoto photo={photo} />
         </View>
       </Pressable>
     </View>
@@ -194,6 +182,46 @@ const MemoVoteCardContent = memo(
     prev.interactive === next.interactive
 );
 
+const VotePhotoImage = memo(function VotePhotoImage({ photo }: { photo: VotePhoto }) {
+  const uri = getImageUrl(photo.url);
+  const [loaded, setLoaded] = useState(() => loadedVotePhotoUris.has(uri));
+
+  useEffect(() => {
+    setLoaded(loadedVotePhotoUris.has(uri));
+  }, [uri]);
+
+  const markLoaded = () => {
+    loadedVotePhotoUris.add(uri);
+    setLoaded(true);
+  };
+
+  return (
+    <View style={styles.photoImageFrame}>
+      {!loaded ? <View style={styles.photoPlaceholder} /> : null}
+      <Image
+        source={{ uri }}
+        style={styles.photoImage}
+        contentFit="cover"
+        transition={loaded ? 0 : 120}
+        cachePolicy="memory-disk"
+        recyclingKey={String(photo.id)}
+        onLoad={markLoaded}
+        onDisplay={markLoaded}
+        onError={(e) => {
+          markLoaded();
+          console.warn("[vote-flow] image load failed", {
+            photoId: photo.id,
+            url: uri,
+            error: e,
+          });
+        }}
+      />
+    </View>
+  );
+});
+
+const MemoVotePhoto = memo(VotePhotoImage, (prev, next) => prev.photo.id === next.photo.id && prev.photo.url === next.photo.url);
+
 const styles = StyleSheet.create({
   stack: {
     flex: 1,
@@ -201,6 +229,7 @@ const styles = StyleSheet.create({
   },
   layer: {
     ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#1a1a2e",
   },
   content: {
     flex: 1,
@@ -290,6 +319,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#1a1a2e",
     borderRadius: 12,
     overflow: "hidden",
+  },
+  photoImageFrame: {
+    flex: 1,
+    backgroundColor: "#1a1a2e",
+  },
+  photoPlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#20243b",
   },
   photoImage: {
     width: "100%",

@@ -635,7 +635,11 @@ export async function getVoteByUserAndCard(userId: number, cardId: number) {
 export async function createFavorite(data: InsertFavorite): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+  if (data.userId == null) throw new Error("Favorite userId is required");
+
+  await db.delete(favorites)
+    .where(and(eq(favorites.userId, data.userId), eq(favorites.cardId, data.cardId)));
+
   const result = await db.insert(favorites).values(data);
   return Number(result[0].insertId);
 }
@@ -668,7 +672,7 @@ export async function getFavoritesCountByCardId(cardId: number): Promise<number>
 export async function getFavoritesCountByUserId(userId: number): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
-  const result = await db.select({ count: sql<number>`count(*)` })
+  const result = await db.select({ count: sql<number>`count(distinct ${favorites.cardId})` })
     .from(favorites)
     .where(eq(favorites.userId, userId));
   return result[0]?.count ?? 0;
@@ -695,20 +699,23 @@ export async function getFavoritesPageByUserId(
   if (!db) return { items: [] };
 
   const pageSize = Math.min(Math.max(options?.limit ?? 20, 1), 50);
-  const whereClause = options?.cursor
-    ? and(eq(favorites.userId, userId), lt(favorites.id, options.cursor))
-    : eq(favorites.userId, userId);
-
-  const rows = await db
-    .select({
-      id: favorites.id,
-      cardId: favorites.cardId,
-      createdAt: favorites.createdAt,
-    })
-    .from(favorites)
-    .where(whereClause)
-    .orderBy(desc(favorites.id))
-    .limit(pageSize + 1);
+  const cursorClause = options?.cursor ? sql`and f.id < ${options.cursor}` : sql.empty();
+  const result = await db.execute(sql<{
+    id: number;
+    cardId: number;
+    createdAt: Date;
+  }>`
+    select latest.id, latest.cardId, latest.createdAt
+    from (
+      select max(f.id) as id, f.cardId, max(f.createdAt) as createdAt
+      from ${favorites} f
+      where f.userId = ${userId} ${cursorClause}
+      group by f.cardId
+    ) as latest
+    order by latest.id desc
+    limit ${pageSize + 1}
+  `);
+  const [rows] = result as unknown as [Array<{ id: number; cardId: number; createdAt: Date }>, unknown];
 
   const hasMore = rows.length > pageSize;
   const items = hasMore ? rows.slice(0, pageSize) : rows;

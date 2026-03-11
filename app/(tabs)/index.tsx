@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { View, Text, StyleSheet, Pressable, Image as RNImage, Dimensions, ActivityIndicator, Modal, Platform, Alert, TextInput, KeyboardAvoidingView, ScrollView as RNScrollView } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { Image } from "expo-image";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/hooks/use-auth";
@@ -35,6 +36,7 @@ const QUEUE_MAX = 200;
 const QUEUE_KEEP = 50;
 const REFILL_THRESHOLD = 5;
 const INITIAL_FETCH_TIMEOUT_MS = 12000;
+const VOTE_FLOW_PENDING_ADVANCE_KEY = "@vote_flow_pending_advance_card_id";
 
 /** "YYYY-MM-DD" -> "YYYY年M月D日" */
 function formatVoteDate(voteDate: string): string {
@@ -335,11 +337,8 @@ export default function ImageTestScreen() {
           }
         );
       }
-      setVoteResult({ percentage: data.percentage, voteCount: data.voteCount, totalVotes: data.totalVotes });
-      setUserVotedAt(data.voteDate);
-      setShowResult(true);
-      setShowComments(false);
-      router.replace(`/result?cardId=${variables.cardId}`);
+      AsyncStorage.setItem(VOTE_FLOW_PENDING_ADVANCE_KEY, String(variables.cardId)).catch(() => {});
+      router.push({ pathname: "/result", params: { cardId: String(variables.cardId), from: "vote-flow" } });
     },
     onError: (error) => {
       console.error("Vote error:", error);
@@ -352,19 +351,6 @@ export default function ImageTestScreen() {
     { cardId: currentCard?.id ?? 0 },
     { enabled: !!currentCard && !!user }
   );
-
-  const applyPreviousVoteResult = useCallback(
-    (data: NonNullable<typeof myVoteResultData>) => {
-      setSelectedPhotoId(data.photoId);
-      setAllPhotoStats(data.photoStats);
-      setVoteResult({ percentage: data.percentage, voteCount: data.voteCount, totalVotes: data.totalVotes });
-      setUserVotedAt(data.voteDate);
-      setShowResult(true);
-      setShowComments(false);
-    },
-    []
-  );
-
 
   const { data: commentsData, refetch: refetchComments } = trpc.comments.getByCardId.useQuery(
     { cardId: currentCard?.id ?? 0 },
@@ -517,7 +503,7 @@ export default function ImageTestScreen() {
       }
       await MediaLibrary.saveToLibraryAsync(shareThumbnail);
       const xhsScheme = "xhsdiscover://post";
-      const canOpen = await Linking.canOpenURL(xhsScheme);
+      const canOpen = Platform.OS === "android" ? true : await Linking.canOpenURL(xhsScheme);
       if (!canOpen) {
         Alert.alert("截图已保存", "请打开小红书 App，从相册选择刚保存的图片发布笔记。");
         return;
@@ -556,8 +542,8 @@ export default function ImageTestScreen() {
       }
       // 已有投票记录：直接展示原有结果，忽略本次选择
       if (myVoteResultData) {
-        applyPreviousVoteResult(myVoteResultData);
-        router.replace(`/result?cardId=${currentCard.id}`);
+        AsyncStorage.setItem(VOTE_FLOW_PENDING_ADVANCE_KEY, String(currentCard.id)).catch(() => {});
+        router.push({ pathname: "/result", params: { cardId: String(currentCard.id), from: "vote-flow" } });
         return;
       }
       setSelectedPhotoId(photoId);
@@ -566,7 +552,7 @@ export default function ImageTestScreen() {
         photoId,
       });
     },
-    [selectedPhotoId, currentCard, isCheckingVote, myVoteResultData, applyPreviousVoteResult, submitVoteMutation, user, router]
+    [selectedPhotoId, currentCard, isCheckingVote, myVoteResultData, submitVoteMutation, user, router]
   );
 
   // 全屏查看打开时滚动到对应索引
@@ -757,6 +743,26 @@ export default function ImageTestScreen() {
     opacity: cardOpacity.value,
   }));
 
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      AsyncStorage.getItem(VOTE_FLOW_PENDING_ADVANCE_KEY)
+        .then((pendingCardId) => {
+          if (!active || !pendingCardId || !currentCard || isTransitioning) return;
+          if (Number.parseInt(pendingCardId, 10) !== currentCard.id) return;
+
+          AsyncStorage.removeItem(VOTE_FLOW_PENDING_ADVANCE_KEY).catch(() => {});
+          goToNextCard();
+        })
+        .catch(() => {});
+
+      return () => {
+        active = false;
+      };
+    }, [currentCard, goToNextCard, isTransitioning]),
+  );
+
   return (
     <GestureHandlerRootView style={styles.container}>
       <GestureDetector gesture={swipeGesture}>
@@ -805,7 +811,7 @@ export default function ImageTestScreen() {
               <Text style={styles.stateText}>暂无可展示图片</Text>
             </View>
           ) : (
-            <View style={styles.content}>
+            <View style={[styles.content, { paddingTop: insets.top + 84 }]}>
               {!showResult ? (
                 <VoteCardStack
                   currentCard={currentCard!}
@@ -1287,15 +1293,15 @@ const styles = StyleSheet.create({
     flex: 1,
     width: "100%",
     paddingHorizontal: 24,
-    paddingTop: 110,
     paddingBottom: 100,
   },
   voteTitle: {
     fontSize: 28,
+    lineHeight: 40,
     fontWeight: "bold",
     color: "#ffffff",
     textAlign: "center",
-    marginTop: -SCREEN_HEIGHT * 0.05,
+    marginTop: 0,
     marginBottom: 20,
   },
   voteDateSubtitle: {
@@ -1307,12 +1313,13 @@ const styles = StyleSheet.create({
   },
   voteTitleSmall: {
     fontSize: 22,
+    lineHeight: 32,
   },
   voteSubtitle: {
     fontSize: 14,
     color: "rgba(255,255,255,0.6)",
     textAlign: "center",
-    marginTop: -12,
+    marginTop: 0,
     marginBottom: 12,
   },
   resultsList: {

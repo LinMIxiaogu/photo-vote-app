@@ -105,11 +105,11 @@ async function startServer() {
     const desc = `「${title}」正在投票中，打开一选参与这个有趣的选择。`;
     const photoCount = cardPhotos.length;
     const shareUrl = `${baseUrl}/share/card/${cardId}`;
-    const appDeepLink = `${APP_DEEP_LINK_SCHEME}://vote-flow?cardId=${cardId}`;
+    const appDeepLink = `${APP_DEEP_LINK_SCHEME}:///vote-flow?cardId=${cardId}`;
     const iosDownloadUrl = process.env.IOS_APP_DOWNLOAD_URL?.trim() || "";
     const androidDownloadUrl = process.env.ANDROID_APP_DOWNLOAD_URL?.trim() || "";
     const genericDownloadUrl = process.env.APP_DOWNLOAD_URL?.trim() || "";
-    const fallbackDownloadUrl = genericDownloadUrl || iosDownloadUrl || androidDownloadUrl || shareUrl;
+    const fallbackDownloadUrl = genericDownloadUrl || iosDownloadUrl || androidDownloadUrl || "";
 
     const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -142,8 +142,11 @@ async function startServer() {
     .title{font-size:20px;font-weight:700;margin-bottom:8px;line-height:1.4}
     .subtitle{font-size:14px;color:rgba(255,255,255,0.55);margin-bottom:24px}
     .btn{display:inline-block;background:#6366F1;color:#fff;text-decoration:none;border-radius:50px;padding:14px 36px;font-size:16px;font-weight:600}
+    .btn-secondary{margin-top:12px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.14)}
     .btn:active{opacity:.85}
     .hint{margin-top:12px;font-size:12px;color:rgba(255,255,255,0.35);line-height:1.6}
+    .status{display:none;margin-top:12px;font-size:12px;line-height:1.6;color:#FDE68A}
+    .status.visible{display:block}
     .footer{margin-top:24px;font-size:12px;color:rgba(255,255,255,0.25)}
   </style>
 </head>
@@ -165,7 +168,9 @@ async function startServer() {
     <h1 class="title">${escHtml(title)}</h1>
     <p class="subtitle">共 ${photoCount} 张图，打开一选参与投票。</p>
     <a class="btn" id="open-app-btn" href="${escHtml(appDeepLink)}">打开 App 参与投票</a>
-    <p class="hint">已安装一选会直接打开对应卡片；未安装时会跳转到下载页。</p>
+    ${fallbackDownloadUrl ? `<a class="btn btn-secondary" id="download-app-btn" href="${escHtml(fallbackDownloadUrl)}">下载一选</a>` : ""}
+<!--    <p class="hint">已安装一选会直接打开对应卡片；未安装时会跳转到下载页。</p>-->
+    <p class="status" id="open-app-status" aria-live="polite"></p>
   </div>
   <p class="footer">一选 · 表达你的立场</p>
   <script>
@@ -177,12 +182,29 @@ async function startServer() {
       var fallbackDownloadUrl = ${JSON.stringify(fallbackDownloadUrl)};
       var hasNavigated = false;
       var timer = null;
+      var statusEl = document.getElementById("open-app-status");
+
+      function showStatus(message) {
+        if (!statusEl) return;
+        statusEl.textContent = message;
+        statusEl.className = message ? "status visible" : "status";
+      }
 
       function getDownloadUrl() {
         var ua = navigator.userAgent || "";
         if (/Android/i.test(ua) && androidDownloadUrl) return androidDownloadUrl;
         if (/iPhone|iPad|iPod/i.test(ua) && iosDownloadUrl) return iosDownloadUrl;
         return genericDownloadUrl || fallbackDownloadUrl;
+      }
+
+      function goToDownloadPage() {
+        var downloadUrl = getDownloadUrl();
+        if (!downloadUrl) {
+          showStatus("未配置下载地址，请使用 Safari 打开或前往 App Store 搜索“一选”。");
+          return;
+        }
+        showStatus("未能打开 App，正在前往下载页...");
+        window.location.href = downloadUrl;
       }
 
       function cancelFallback() {
@@ -195,10 +217,11 @@ async function startServer() {
 
       function openAppWithFallback() {
         if (hasNavigated) return;
+        showStatus("正在尝试打开一选...");
         timer = window.setTimeout(function () {
           if (hasNavigated) return;
-          window.location.href = getDownloadUrl();
-        }, 1500);
+          goToDownloadPage();
+        }, 1200);
         window.location.href = deepLink;
       }
 
