@@ -204,6 +204,9 @@ export default function ResultScreenV2() {
     return displayPhotos.reduce((leader, photo) => (photo.voteCount > leader.voteCount ? photo : leader), displayPhotos[0]);
   }, [displayPhotos]);
   const commentCount = comments.length;
+  const composerBottomOffset = isComposerExpanded
+    ? (Platform.OS === "ios" ? 0 : Math.max(keyboardHeight, 0))
+    : 0;
 
   const handleBack = useCallback(() => {
     if (fromFavorites || fromVoteFlow) {
@@ -662,7 +665,6 @@ export default function ResultScreenV2() {
                   );
                 })}
               </View>
-              {selectedPhoto ? <Text style={styles.selectionHintText}>你投给了选项 {selectedPhoto.photoIndex + 1}</Text> : null}
             </View>
 
             <View style={styles.sectionDivider} />
@@ -821,7 +823,7 @@ export default function ResultScreenV2() {
               {
                 borderTopColor: colors.border,
                 paddingBottom: Math.max(insets.bottom, 10),
-                bottom: isComposerExpanded ? Math.max(keyboardHeight, 0) : 0,
+                bottom: composerBottomOffset,
               },
             ]}
           >
