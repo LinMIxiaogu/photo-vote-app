@@ -1,8 +1,12 @@
-import { Dimensions } from "react-native";
+import { Dimensions, Platform } from "react-native";
 
 export const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
-export const SWIPE_THRESHOLD = SCREEN_HEIGHT * 0.08;
+const IOS_SWIPE_THRESHOLD_RATIO = 0.045;
+const DEFAULT_SWIPE_THRESHOLD_RATIO = 0.08;
+
+export const SWIPE_THRESHOLD =
+  SCREEN_HEIGHT * (Platform.OS === "ios" ? IOS_SWIPE_THRESHOLD_RATIO : DEFAULT_SWIPE_THRESHOLD_RATIO);
 export const BATCH_SIZE = 50;
 export const QUEUE_MAX = 200;
 export const QUEUE_KEEP = 50;

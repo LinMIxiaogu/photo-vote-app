@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
-  Image as RNImage,
   InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
@@ -40,7 +39,7 @@ import { trpc } from "@/lib/trpc";
 import { getImageUrl } from "@/lib/utils";
 
 const SKIP_VOTE_REDIRECT_KEY = "@skip_vote_redirect";
-const shareIcon = require("@/assets/images/share-icon.png");
+const shareIcon = require("@/assets/images/share-icon-result.png");
 
 type CommentItem = {
   id: number;
@@ -594,13 +593,15 @@ export default function ResultScreenV2() {
                 </Text>
               </View>
             </View>
-            <Pressable onPress={handleOpenShareSheet} style={styles.headerIconButton} hitSlop={8} disabled={isSharing}>
-              {isSharing ? (
-                <ActivityIndicator size="small" color="#27211B" />
-              ) : (
-                <RNImage source={shareIcon} style={styles.headerShareIcon} resizeMode="contain" />
-              )}
-            </Pressable>
+              <Pressable onPress={handleOpenShareSheet} style={styles.headerIconButton} hitSlop={8} disabled={isSharing}>
+                {isSharing ? (
+                  <ActivityIndicator size="small" color="#27211B" />
+                ) : (
+                  <View style={styles.headerShareIconWrap}>
+                    <Image source={shareIcon} style={styles.headerShareIcon} contentFit="contain" />
+                  </View>
+                )}
+              </Pressable>
           </View>
           <ScrollView
             ref={scrollRef}
@@ -1018,7 +1019,8 @@ const styles = StyleSheet.create({
   },
   header: { display: "none" },
   headerIconButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  headerShareIcon: { width: 18, height: 18, tintColor: "#27211B" },
+  headerShareIconWrap: { width: 18, height: 18, alignItems: "center", justifyContent: "center" },
+  headerShareIcon: { width: 18, height: 18 },
   headerBackText: { fontSize: 34, lineHeight: 34, color: "#27211B", marginTop: -2 },
   headerIdentity: { flexDirection: "row", alignItems: "center", flex: 1, marginHorizontal: 8, minWidth: 0 },
   headerAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#F3E7D8", alignItems: "center", justifyContent: "center", overflow: "hidden" },

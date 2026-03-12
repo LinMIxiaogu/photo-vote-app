@@ -37,7 +37,7 @@ export default function EditCopyScreen() {
   const [description, setDescription] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const toastOpacity = useRef(new Animated.Value(0)).current;
-  const toastTranslateY = useRef(new Animated.Value(12)).current;
+  const toastTranslateY = useRef(new Animated.Value(-12)).current;
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const redirectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -73,7 +73,7 @@ export default function EditCopyScreen() {
           useNativeDriver: true,
         }),
         Animated.timing(toastTranslateY, {
-          toValue: 8,
+          toValue: -8,
           duration: 220,
           easing: Easing.in(Easing.cubic),
           useNativeDriver: true,
@@ -399,7 +399,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 34,
+    top: 12,
     alignItems: "center",
     zIndex: 20,
   },

@@ -29,6 +29,7 @@ type Props = {
   previousCard: VoteCardStackCard | null;
   selectedPhotoId: number | null;
   onPhotoPress: (photoId: number, photoIndex: number) => void;
+  interactionsDisabled?: boolean;
   translateY: SharedValue<number>;
   swipeDirection: SharedValue<-1 | 0 | 1>;
 };
@@ -39,6 +40,7 @@ export const VoteCardStack = memo(function VoteCardStack({
   previousCard,
   selectedPhotoId,
   onPhotoPress,
+  interactionsDisabled = false,
   translateY,
   swipeDirection,
 }: Props) {
@@ -89,7 +91,7 @@ export const VoteCardStack = memo(function VoteCardStack({
           card={activeCard}
           selectedPhotoId={selectedPhotoId}
           onPhotoPress={onPhotoPress}
-          interactive
+          interactive={!interactionsDisabled}
         />
       </Animated.View>
     </View>
@@ -147,7 +149,7 @@ function VoteCardContent({
           if (!shouldHandlePress(photo.id)) return;
           onPhotoPress(photo.id, photoIndex);
         } : undefined}
-        disabled={!interactive || selectedPhotoId !== null}
+        disabled={!interactive}
         style={styles.photoCardPressable}
       >
         <View style={styles.photoImageWrap}>

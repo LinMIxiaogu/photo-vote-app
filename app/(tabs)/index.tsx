@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image as RNImage,
   Platform,
   Pressable,
   ScrollView,
@@ -12,6 +11,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
+import { Image } from "expo-image";
 import * as Linking from "expo-linking";
 import * as MediaLibrary from "expo-media-library";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -43,8 +43,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { getApiBaseUrl } from "@/constants/oauth";
 import { trpc } from "@/lib/trpc";
 
-const shareIcon = require("@/assets/images/share-icon.png");
+const shareIcon = require("@/assets/images/share-icon-card.png");
 const SWIPE_GUIDE_SHOWN_KEY = "@swipe_guide_shown_v1";
+const IMAGE_VIEWER_TOUCH_BLOCK_MS = 500;
 
 export default function VoteFlowScreen() {
   const router = useRouter();
@@ -56,6 +57,7 @@ export default function VoteFlowScreen() {
 
   const [selectedPhotoId, setSelectedPhotoId] = useState<number | null>(null);
   const [expandedPhotoIndex, setExpandedPhotoIndex] = useState<number | null>(null);
+  const [isPhotoInteractionLocked, setIsPhotoInteractionLocked] = useState(false);
   const [showShareSheet, setShowShareSheet] = useState(false);
   const [shareThumbnail, setShareThumbnail] = useState<string | null>(null);
   const [hideShareBtn, setHideShareBtn] = useState(false);
@@ -70,6 +72,8 @@ export default function VoteFlowScreen() {
   const lastTapRef = useRef(0);
   const singleTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const imageViewerDismissedAtRef = useRef(0);
+  const imageViewerUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const translateY = useSharedValue(0);
   const swipeDirection = useSharedValue<-1 | 0 | 1>(0);
@@ -106,7 +110,34 @@ export default function VoteFlowScreen() {
       if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
       if (swipeGuideTimerRef.current) clearTimeout(swipeGuideTimerRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      if (imageViewerUnlockTimerRef.current) clearTimeout(imageViewerUnlockTimerRef.current);
     };
+  }, []);
+
+  const clearPhotoTapState = useCallback(() => {
+    lastTapRef.current = 0;
+    if (singleTapTimeoutRef.current) {
+      clearTimeout(singleTapTimeoutRef.current);
+      singleTapTimeoutRef.current = null;
+    }
+  }, []);
+
+  const lockPhotoInteractions = useCallback(() => {
+    setIsPhotoInteractionLocked(true);
+    if (imageViewerUnlockTimerRef.current) {
+      clearTimeout(imageViewerUnlockTimerRef.current);
+      imageViewerUnlockTimerRef.current = null;
+    }
+  }, []);
+
+  const unlockPhotoInteractionsWithDelay = useCallback((delay = IMAGE_VIEWER_TOUCH_BLOCK_MS) => {
+    if (imageViewerUnlockTimerRef.current) {
+      clearTimeout(imageViewerUnlockTimerRef.current);
+    }
+    imageViewerUnlockTimerRef.current = setTimeout(() => {
+      setIsPhotoInteractionLocked(false);
+      imageViewerUnlockTimerRef.current = null;
+    }, delay);
   }, []);
 
   const {
@@ -225,7 +256,7 @@ export default function VoteFlowScreen() {
 
   const handleSelectPhoto = useCallback(
     (photoId: number) => {
-      if (selectedPhotoId !== null || !currentCard || isCheckingVote) return;
+      if (!currentCard || isCheckingVote || submitVoteMutation.isPending) return;
 
       if (!user) {
         if (Platform.OS === "web") {
@@ -247,15 +278,24 @@ export default function VoteFlowScreen() {
       setSelectedPhotoId(photoId);
       submitVoteMutation.mutate({ cardId: currentCard.id, photoId });
     },
-    [currentCard, isCheckingVote, myVoteResultData, router, selectedPhotoId, submitVoteMutation, user],
+    [currentCard, isCheckingVote, myVoteResultData, router, submitVoteMutation, user],
   );
 
   const handlePhotoPress = useCallback((photoId: number, photoIndex: number) => {
+    if (
+      isPhotoInteractionLocked ||
+      Date.now() - imageViewerDismissedAtRef.current < IMAGE_VIEWER_TOUCH_BLOCK_MS
+    ) {
+      clearPhotoTapState();
+      return;
+    }
+
     const now = Date.now();
     if (now - lastTapRef.current < 400 && singleTapTimeoutRef.current) {
       clearTimeout(singleTapTimeoutRef.current);
       singleTapTimeoutRef.current = null;
       lastTapRef.current = 0;
+      lockPhotoInteractions();
       setExpandedPhotoIndex(photoIndex);
       return;
     }
@@ -265,7 +305,14 @@ export default function VoteFlowScreen() {
       handleSelectPhoto(photoId);
       singleTapTimeoutRef.current = null;
     }, 300);
-  }, [handleSelectPhoto]);
+  }, [clearPhotoTapState, handleSelectPhoto, isPhotoInteractionLocked, lockPhotoInteractions]);
+
+  const handleCloseImageViewer = useCallback(() => {
+    imageViewerDismissedAtRef.current = Date.now();
+    clearPhotoTapState();
+    setExpandedPhotoIndex(null);
+    unlockPhotoInteractionsWithDelay();
+  }, [clearPhotoTapState, unlockPhotoInteractionsWithDelay]);
 
   const handleQueueNext = useCallback(() => {
     if (showSwipeGuide) {
@@ -367,7 +414,9 @@ export default function VoteFlowScreen() {
                 {isSharing ? (
                   <ActivityIndicator size="small" color="rgba(255,255,255,0.85)" />
                 ) : (
-                  <RNImage source={shareIcon} style={styles.shareBtnIcon} resizeMode="contain" />
+                  <View style={styles.shareBtnIconWrap}>
+                    <Image source={shareIcon} style={styles.shareBtnIcon} contentFit="contain" />
+                  </View>
                 )}
               </Pressable>
             ) : null}
@@ -403,6 +452,7 @@ export default function VoteFlowScreen() {
                 nextCard={nextCard}
                 previousCard={previousCard}
                 selectedPhotoId={selectedPhotoId}
+                interactionsDisabled={isPhotoInteractionLocked || expandedPhotoIndex !== null}
                 onPhotoPress={handlePhotoPress}
                 translateY={translateY}
                 swipeDirection={swipeDirection}
@@ -414,7 +464,7 @@ export default function VoteFlowScreen() {
             visible={expandedPhotoIndex !== null && !!currentCard}
             photos={currentCard?.photos ?? []}
             scrollRef={imageViewerScrollRef}
-            onClose={() => setExpandedPhotoIndex(null)}
+            onClose={handleCloseImageViewer}
             onMomentumScrollEnd={(index) => {
               if (!currentCard) return;
               const nextIndex = Math.min(Math.max(0, index), currentCard.photos.length - 1);
@@ -484,10 +534,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  shareBtnIconWrap: {
+    width: 18,
+    height: 18,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   shareBtnIcon: {
     width: 18,
     height: 18,
-    tintColor: "rgba(255,255,255,0.85)",
   },
   content: {
     flex: 1,
