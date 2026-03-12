@@ -14,4 +14,7 @@ export const ENV = {
   ossBucket: process.env.OSS_BUCKET ?? "",
   ossPublicBaseUrl: process.env.OSS_PUBLIC_BASE_URL ?? "",
   hermitPurpleBaseUrl: process.env.HERMIT_PURPLE_BASE_URL ?? "",
+  authBypassEnabled: process.env.AUTH_BYPASS_ENABLED ?? "",
+  authBypassPhone: process.env.AUTH_BYPASS_PHONE ?? "",
+  authBypassCode: process.env.AUTH_BYPASS_CODE ?? "",
 };

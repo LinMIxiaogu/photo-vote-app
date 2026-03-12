@@ -5,6 +5,7 @@ import { phoneToOpenId } from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { hashPassword, verifyPassword } from "./password";
 import { sdk } from "./sdk";
+import { ENV } from "./env";
 import { loginBySmsCode, sendSmsCode } from "./hermitPurpleAuthService";
 import { moderateText } from "./aliyunTextModeration";
 
@@ -17,6 +18,16 @@ function isValidPhone(phone: string): boolean {
 
 function isValidVerificationCode(code: string): boolean {
   return /^\d{6}$/.test(code.trim());
+}
+
+function isBypassPhoneLogin(phone: string, code: string): boolean {
+  const bypassEnabled = ENV.authBypassEnabled.trim().toLowerCase() === "true";
+  const bypassPhone = ENV.authBypassPhone.trim();
+  const bypassCode = ENV.authBypassCode.trim();
+  if (!bypassEnabled || !bypassPhone || !bypassCode) {
+    return false;
+  }
+  return phone.trim() === bypassPhone && code.trim() === bypassCode;
 }
 
 function getQueryParam(req: Request, key: string): string | undefined {
@@ -236,8 +247,13 @@ export function registerOAuthRoutes(app: Express) {
       }
 
       // 调用 Java 服务完成短信验证码校验与登录/注册
-      const hermitUser = await loginBySmsCode(raw, codeStr, { smsType: "LOGIN_OR_REGISTER" });
-      const hermitUserUUID = hermitUser.userUUID;
+      let hermitUserUUID: string | undefined;
+      if (isBypassPhoneLogin(raw, codeStr)) {
+        console.warn("[Auth] phone-login bypass enabled for configured test phone");
+      } else {
+        const hermitUser = await loginBySmsCode(raw, codeStr, { smsType: "LOGIN_OR_REGISTER" });
+        hermitUserUUID = hermitUser.userUUID;
+      }
 
       let user = await getUserByPhone(raw);
       if (!user) {

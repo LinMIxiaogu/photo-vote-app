@@ -4,6 +4,7 @@ import {
   Alert,
   BackHandler,
   Image as RNImage,
+  InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -24,7 +25,7 @@ import * as Linking from "expo-linking";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from "react-native-reanimated";
 import { captureRef } from "react-native-view-shot";
@@ -83,15 +84,25 @@ export default function ResultScreenV2() {
   const sharePosterRef = useRef<View>(null);
   const inputRef = useRef<TextInput>(null);
   const isPickingImageRef = useRef(false);
+  const shouldRestoreComposerFocusRef = useRef(false);
+  const restoreComposerFocusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoreComposerFocusFrameRef = useRef<number | null>(null);
+  const restoreComposerFocusTaskRef = useRef<{ cancel?: () => void } | null>(null);
+  const restoreComposerRefocusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoreRequestIdRef = useRef(0);
 
   const [commentText, setCommentText] = useState("");
   const [commentImages, setCommentImages] = useState<string[]>([]);
   const [commentImageUrls, setCommentImageUrls] = useState<string[]>([]);
   const [commentUploading, setCommentUploading] = useState(false);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [commentsAnchorY, setCommentsAnchorY] = useState(0);
+  const [composerLayoutVersion, setComposerLayoutVersion] = useState(0);
   const [refreshingComments, setRefreshingComments] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [restoreRequestId, setRestoreRequestId] = useState(0);
   const [expandedReplies, setExpandedReplies] = useState<Record<number, ReplyBlock>>({});
   const [loadingReplies, setLoadingReplies] = useState<Record<number, boolean>>({});
   const [replyingTo, setReplyingTo] = useState<{ parentCommentId: number; userName: string; replyToUserId?: number | null } | null>(null);
@@ -182,6 +193,12 @@ export default function ResultScreenV2() {
   const displayPhotos = useMemo(() => (card ? [...card.photos].sort((a, b) => a.photoIndex - b.photoIndex) : []), [card]);
   const totalVotes = useMemo(() => displayPhotos.reduce((sum, item) => sum + item.voteCount, 0), [displayPhotos]);
   const leaderVoteCount = useMemo(() => displayPhotos.reduce((max, item) => Math.max(max, item.voteCount), 0), [displayPhotos]);
+  const selectedPhotoId = myVoteResultData?.photoId ?? null;
+  const selectedPhoto = useMemo(
+    () => displayPhotos.find((photo) => photo.id === selectedPhotoId) ?? null,
+    [displayPhotos, selectedPhotoId],
+  );
+  const firstVoteTimeLabel = myVoteResultData?.createdAt ? formatTimeLabel(myVoteResultData.createdAt) : null;
   const leadingPhoto = useMemo(() => {
     if (displayPhotos.length === 0) return null;
     return displayPhotos.reduce((leader, photo) => (photo.voteCount > leader.voteCount ? photo : leader), displayPhotos[0]);
@@ -271,11 +288,83 @@ export default function ResultScreenV2() {
     showToast("链接已复制到剪贴板");
   }, [card, closeShareSheet, showToast]);
 
+  const cancelPendingComposerFocusRestore = useCallback(() => {
+    if (restoreComposerFocusTimeoutRef.current) {
+      clearTimeout(restoreComposerFocusTimeoutRef.current);
+      restoreComposerFocusTimeoutRef.current = null;
+    }
+
+    if (restoreComposerRefocusTimeoutRef.current) {
+      clearTimeout(restoreComposerRefocusTimeoutRef.current);
+      restoreComposerRefocusTimeoutRef.current = null;
+    }
+
+    if (restoreComposerFocusFrameRef.current != null) {
+      cancelAnimationFrame(restoreComposerFocusFrameRef.current);
+      restoreComposerFocusFrameRef.current = null;
+    }
+
+    restoreComposerFocusTaskRef.current?.cancel?.();
+    restoreComposerFocusTaskRef.current = null;
+  }, []);
+
+  const clearPendingComposerFocusRestore = useCallback(() => {
+    cancelPendingComposerFocusRestore();
+    shouldRestoreComposerFocusRef.current = false;
+  }, [cancelPendingComposerFocusRestore]);
+
+  const requestComposerFocusRestoreAfterPick = useCallback(() => {
+    cancelPendingComposerFocusRestore();
+    shouldRestoreComposerFocusRef.current = true;
+    restoreRequestIdRef.current += 1;
+    setRestoreRequestId(restoreRequestIdRef.current);
+  }, [cancelPendingComposerFocusRestore]);
+
   useEffect(() => {
     return () => {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      clearPendingComposerFocusRestore();
     };
   }, []);
+
+  useEffect(() => {
+    if (!shouldRestoreComposerFocusRef.current || restoreRequestId === 0 || !isComposerExpanded) {
+      return;
+    }
+
+    cancelPendingComposerFocusRestore();
+    restoreComposerFocusFrameRef.current = requestAnimationFrame(() => {
+      restoreComposerFocusFrameRef.current = null;
+      restoreComposerFocusTaskRef.current = InteractionManager.runAfterInteractions(() => {
+        restoreComposerFocusTaskRef.current = null;
+        restoreComposerFocusTimeoutRef.current = setTimeout(() => {
+          restoreComposerFocusTimeoutRef.current = null;
+          const isInputStillFocused = inputRef.current?.isFocused?.() ?? false;
+          if (!shouldRestoreComposerFocusRef.current || isPickingImageRef.current) return;
+          if (isInputStillFocused && !isKeyboardVisible) {
+            inputRef.current?.blur();
+            setIsInputFocused(false);
+            restoreComposerRefocusTimeoutRef.current = setTimeout(() => {
+              restoreComposerRefocusTimeoutRef.current = null;
+              if (!shouldRestoreComposerFocusRef.current || isPickingImageRef.current) return;
+              inputRef.current?.focus();
+            }, Platform.OS === "android" ? 60 : 0);
+            return;
+          }
+
+          inputRef.current?.focus();
+        }, Platform.OS === "android" ? 80 : 0);
+      });
+    });
+
+    return cancelPendingComposerFocusRestore;
+  }, [
+    cancelPendingComposerFocusRestore,
+    composerLayoutVersion,
+    isComposerExpanded,
+    isKeyboardVisible,
+    restoreRequestId,
+  ]);
 
   useEffect(() => {
     if (accessRedirectedRef.current || cardId <= 0 || isCardLoading) return;
@@ -318,6 +407,7 @@ export default function ResultScreenV2() {
   const pickCommentImage = useCallback(async () => {
     if (commentImages.length >= 2) return;
     isPickingImageRef.current = true;
+    const shouldRestoreFocusAfterPick = isInputFocused || isKeyboardVisible || isComposerExpanded;
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: "images",
@@ -353,16 +443,28 @@ export default function ResultScreenV2() {
       }
       setCommentImages((prev) => [...prev, compressed.uri]);
       setCommentImageUrls((prev) => [...prev, json.url as string]);
+      if (shouldRestoreFocusAfterPick) {
+        setIsComposerExpanded(true);
+        requestComposerFocusRestoreAfterPick();
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "图片上传失败，请重试";
       Alert.alert("上传失败", message);
     } finally {
       isPickingImageRef.current = false;
       setCommentUploading(false);
-      setIsComposerExpanded(true);
-      requestAnimationFrame(() => inputRef.current?.focus());
+      if (!shouldRestoreFocusAfterPick) {
+        clearPendingComposerFocusRestore();
+      }
     }
-  }, [commentImages.length]);
+  }, [
+    clearPendingComposerFocusRestore,
+    commentImages.length,
+    isComposerExpanded,
+    isInputFocused,
+    isKeyboardVisible,
+    requestComposerFocusRestoreAfterPick,
+  ]);
 
   const removeCommentImage = useCallback((index: number) => {
     setCommentImages((prev) => prev.filter((_, i) => i !== index));
@@ -428,11 +530,16 @@ export default function ResultScreenV2() {
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener("keyboardDidShow", (event) => {
+      clearPendingComposerFocusRestore();
+      setIsKeyboardVisible(true);
       setKeyboardHeight(event.endCoordinates.height);
+      setIsComposerExpanded(true);
     });
     const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
+      setIsKeyboardVisible(false);
       setKeyboardHeight(0);
-      if (!isPickingImageRef.current) {
+      if (!isPickingImageRef.current && !shouldRestoreComposerFocusRef.current) {
+        setIsInputFocused(false);
         setIsComposerExpanded(false);
       }
     });
@@ -440,7 +547,7 @@ export default function ResultScreenV2() {
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, []);
+  }, [clearPendingComposerFocusRestore]);
 
   if (!card || (user && !canAccessResult && (isVoteResultLoading || isFavoriteLoading))) {
     return (
@@ -453,6 +560,13 @@ export default function ResultScreenV2() {
 
   return (
     <ScreenContainer edges={["top", "left", "right", "bottom"]} className="flex-1" style={styles.screen}>
+      <Stack.Screen
+        options={{
+          headerShown: false,
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
+        }}
+      />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -523,17 +637,20 @@ export default function ResultScreenV2() {
                 <Text style={styles.sectionTitle}>投票结果</Text>
                 <Text style={styles.sectionMeta}>{totalVotes} 人参与</Text>
               </View>
+              {firstVoteTimeLabel ? <Text style={styles.voteDateText}>第一次投票时间：{firstVoteTimeLabel}</Text> : null}
               <View style={styles.resultList}>
                 {displayPhotos.map((photo) => {
                   const percentage = totalVotes > 0 ? Math.round((photo.voteCount / totalVotes) * 100) : 0;
                   const isLeader = leaderVoteCount > 0 && photo.voteCount === leaderVoteCount;
+                  const isSelected = selectedPhotoId === photo.id;
                   return (
-                    <View key={photo.id} style={styles.resultRow}>
+                    <View key={photo.id} style={[styles.resultRow, isSelected && styles.resultRowSelected]}>
                       <View style={styles.resultThumbWrap}>
                         <Image source={{ uri: getImageUrl(photo.url) }} style={styles.resultThumb} contentFit="cover" />
                       </View>
                       <View style={styles.resultMain}>
                         <View style={styles.resultLabels}>
+                          {isSelected ? <Text style={styles.selectedTag}>你的选择</Text> : <View />}
                           <Text style={styles.resultValue}>{percentage}%</Text>
                         </View>
                         <View style={styles.resultTrack}>
@@ -545,6 +662,7 @@ export default function ResultScreenV2() {
                   );
                 })}
               </View>
+              {selectedPhoto ? <Text style={styles.selectionHintText}>你投给了选项 {selectedPhoto.photoIndex + 1}</Text> : null}
             </View>
 
             <View style={styles.sectionDivider} />
@@ -692,6 +810,11 @@ export default function ResultScreenV2() {
           </ScrollView>
 
           <View
+            onLayout={() => {
+              if (isComposerExpanded) {
+                setComposerLayoutVersion((prev) => prev + 1);
+              }
+            }}
             style={[
               styles.bottomComposer,
               isComposerExpanded && styles.bottomComposerFloating,
@@ -734,6 +857,18 @@ export default function ResultScreenV2() {
                     placeholderTextColor="#B0AAA2"
                     value={commentText}
                     onChangeText={setCommentText}
+                    onFocus={() => {
+                      clearPendingComposerFocusRestore();
+                      setIsInputFocused(true);
+                      setIsComposerExpanded(true);
+                    }}
+                    onBlur={() => {
+                      setIsInputFocused(false);
+                      if (isPickingImageRef.current || shouldRestoreComposerFocusRef.current) return;
+                      if (!commentText.trim() && commentImages.length === 0 && !replyingTo) {
+                        setIsComposerExpanded(false);
+                      }
+                    }}
                     editable={!!user}
                     multiline
                     autoFocus
@@ -898,19 +1033,37 @@ const styles = StyleSheet.create({
   sectionTitleRowSplit: { justifyContent: "space-between" },
   sectionTitle: { fontSize: 24, fontWeight: "800", color: "#27211B" },
   sectionMeta: { fontSize: 13, color: "#8C877F" },
+  voteDateText: { marginTop: -6, fontSize: 12, color: "#8A4B38" },
   sectionMetaLarge: { fontSize: 16, fontWeight: "600", color: "#27211B" },
   resultList: { gap: 14 },
   resultRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  resultRowSelected: {
+    backgroundColor: "#FFF4EE",
+    borderRadius: 18,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
   resultThumbWrap: { width: 58, height: 58, position: "relative" },
   resultThumb: { width: 58, height: 58, borderRadius: 16 },
   resultMain: { flex: 1, gap: 8 },
   resultLabels: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  selectedTag: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#FFF8EF",
+    backgroundColor: "#C85C3C",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
   resultValue: { fontSize: 16, fontWeight: "800", color: "#27211B" },
   resultTrack: { height: 10, borderRadius: 999, backgroundColor: "#EFE4D6", overflow: "hidden" },
   resultFill: { height: "100%", borderRadius: 999 },
   resultFillLeader: { backgroundColor: "#C85C3C" },
   resultFillDefault: { backgroundColor: "#D8A28F" },
   resultVotes: { width: 42, textAlign: "right", fontSize: 13, color: "#8C877F" },
+  selectionHintText: { marginTop: -2, fontSize: 12, color: "#8A4B38" },
   detailTitle: { fontSize: 18, lineHeight: 28, fontWeight: "400", color: "#27211B" },
   detailDescription: { fontSize: 16, lineHeight: 25, color: "#5D5147" },
   detailMetaRow: { display: "none" },

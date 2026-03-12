@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Dimensions, type GestureResponderEvent } from "react-native";
 import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import { Image } from "expo-image";
+
 import { getImageUrl } from "@/lib/utils";
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -23,46 +24,59 @@ export type VoteCardStackCard = {
 };
 
 type Props = {
-  currentCard: VoteCardStackCard;
+  activeCard: VoteCardStackCard;
   nextCard: VoteCardStackCard | null;
+  previousCard: VoteCardStackCard | null;
   selectedPhotoId: number | null;
   onPhotoPress: (photoId: number, photoIndex: number) => void;
   translateY: SharedValue<number>;
-  showNextCard: SharedValue<boolean>;
+  swipeDirection: SharedValue<-1 | 0 | 1>;
 };
 
 export const VoteCardStack = memo(function VoteCardStack({
-  currentCard,
+  activeCard,
   nextCard,
+  previousCard,
   selectedPhotoId,
   onPhotoPress,
   translateY,
-  showNextCard,
+  swipeDirection,
 }: Props) {
-  const currentCardAnimatedStyle = useAnimatedStyle(() => ({
+  const previousCardAnimatedStyle = useAnimatedStyle(() => {
+    const draggingPrev = swipeDirection.value === 1 && translateY.value > 0;
+
+    return {
+      opacity: draggingPrev ? 1 : 0,
+      transform: [{ translateY: draggingPrev ? (-SCREEN_HEIGHT + translateY.value) : -SCREEN_HEIGHT }],
+    };
+  });
+
+  const activeCardAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
   }));
 
-  const nextCardAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{
-      translateY: showNextCard.value
-        ? (translateY.value < 0 ? SCREEN_HEIGHT + translateY.value : SCREEN_HEIGHT)
-        : SCREEN_HEIGHT,
-    }],
-  }));
+  const nextCardAnimatedStyle = useAnimatedStyle(() => {
+    const draggingNext = swipeDirection.value === -1 && translateY.value < 0;
+
+    return {
+      opacity: draggingNext ? 1 : 0,
+      transform: [{ translateY: draggingNext ? (SCREEN_HEIGHT + translateY.value) : SCREEN_HEIGHT }],
+    };
+  });
 
   return (
     <View style={styles.stack}>
-      <Animated.View style={[styles.layer, currentCardAnimatedStyle]}>
-        <MemoVoteCardContent
-          card={currentCard}
-          selectedPhotoId={selectedPhotoId}
-          onPhotoPress={onPhotoPress}
-          interactive
-        />
-      </Animated.View>
+      {previousCard ? (
+        <Animated.View pointerEvents="none" style={[styles.layer, styles.previousLayer, previousCardAnimatedStyle]}>
+          <MemoVoteCardContent
+            card={previousCard}
+            selectedPhotoId={selectedPhotoId}
+            onPhotoPress={onPhotoPress}
+          />
+        </Animated.View>
+      ) : null}
       {nextCard ? (
-        <Animated.View pointerEvents="none" style={[styles.layer, nextCardAnimatedStyle]}>
+        <Animated.View pointerEvents="none" style={[styles.layer, styles.nextLayer, nextCardAnimatedStyle]}>
           <MemoVoteCardContent
             card={nextCard}
             selectedPhotoId={selectedPhotoId}
@@ -70,6 +84,14 @@ export const VoteCardStack = memo(function VoteCardStack({
           />
         </Animated.View>
       ) : null}
+      <Animated.View style={[styles.layer, styles.activeLayer, activeCardAnimatedStyle]}>
+        <MemoVoteCardContent
+          card={activeCard}
+          selectedPhotoId={selectedPhotoId}
+          onPhotoPress={onPhotoPress}
+          interactive
+        />
+      </Animated.View>
     </View>
   );
 });
@@ -207,12 +229,12 @@ const VotePhotoImage = memo(function VotePhotoImage({ photo }: { photo: VotePhot
         recyclingKey={String(photo.id)}
         onLoad={markLoaded}
         onDisplay={markLoaded}
-        onError={(e) => {
+        onError={(error) => {
           markLoaded();
           console.warn("[vote-flow] image load failed", {
             photoId: photo.id,
             url: uri,
-            error: e,
+            error,
           });
         }}
       />
@@ -230,6 +252,15 @@ const styles = StyleSheet.create({
   layer: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "#1a1a2e",
+  },
+  activeLayer: {
+    zIndex: 3,
+  },
+  nextLayer: {
+    zIndex: 2,
+  },
+  previousLayer: {
+    zIndex: 1,
   },
   content: {
     flex: 1,

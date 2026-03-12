@@ -84,3 +84,10 @@ target/
 
 # CocoaPods
 Pods/
+
+# Local export verification output
+.expo-export-android-check/
+.expo-export-check/
+
+# Local Gradle cache for export checks
+.gradle-user-home/
