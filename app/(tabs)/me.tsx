@@ -21,7 +21,6 @@ import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-g
 import { Image } from "expo-image";
 import * as ImageManipulator from "expo-image-manipulator";
 import { useRouter } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
 import { ScreenContainer } from "@/components/screen-container";
 import { HistoryDrawer } from "@/components/history-drawer";
 import { FeedbackModal } from "@/components/feedback-modal";
@@ -339,12 +338,6 @@ export default function MeScreen() {
   const updateNameMutation = trpc.users.updateName.useMutation();
   const updateAvatarMutation = trpc.users.updateAvatar.useMutation();
   const deregisterMutation = trpc.auth.deregister.useMutation();
-
-  useFocusEffect(
-    useCallback(() => {
-      refresh();
-    }, [refresh])
-  );
 
   const { data: myCards } = trpc.cards.getMyCards.useQuery(
     undefined,

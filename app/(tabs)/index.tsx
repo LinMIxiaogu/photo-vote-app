@@ -282,15 +282,17 @@ export default function VoteFlowScreen() {
   );
 
   const handlePhotoPress = useCallback((photoId: number, photoIndex: number) => {
+    const now = Date.now();
+    const dismissedAgo = now - imageViewerDismissedAtRef.current;
+
     if (
       isPhotoInteractionLocked ||
-      Date.now() - imageViewerDismissedAtRef.current < IMAGE_VIEWER_TOUCH_BLOCK_MS
+      dismissedAgo < IMAGE_VIEWER_TOUCH_BLOCK_MS
     ) {
       clearPhotoTapState();
       return;
     }
 
-    const now = Date.now();
     if (now - lastTapRef.current < 400 && singleTapTimeoutRef.current) {
       clearTimeout(singleTapTimeoutRef.current);
       singleTapTimeoutRef.current = null;

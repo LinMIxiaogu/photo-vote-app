@@ -1,5 +1,5 @@
 import { memo, RefObject, useCallback, useEffect, useRef } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Modal, ScrollView, StyleSheet, TouchableWithoutFeedback, View } from "react-native";
 import { Image } from "expo-image";
 
 import { getImageUrl } from "@/lib/utils";
@@ -27,45 +27,50 @@ export const ImageViewerModal = memo(function ImageViewerModal({
     if (visible) {
       closeInFlightRef.current = false;
     }
-  }, [visible]);
+  }, [photos.length, visible]);
 
-  const handleClosePressIn = useCallback(() => {
+  const handleClosePress = useCallback(() => {
     if (closeInFlightRef.current) return;
     closeInFlightRef.current = true;
     onClose();
   }, [onClose]);
 
+  const handleMomentumScrollEnd = useCallback((index: number) => {
+    if (!visible || closeInFlightRef.current) {
+      return;
+    }
+    onMomentumScrollEnd(index);
+  }, [onMomentumScrollEnd, visible]);
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.imageViewerOverlay}>
-        <ScrollView
-          ref={scrollRef}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          style={styles.imageViewerScroll}
-          contentContainerStyle={styles.imageViewerScrollContent}
-          onMomentumScrollEnd={(event) => {
-            const index = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
-            onMomentumScrollEnd(index);
-          }}
-          scrollEventThrottle={16}
-        >
-          {photos.map((item) => (
-            <Pressable
-              key={item.id}
-              style={styles.imageViewerPage}
-              onPressIn={handleClosePressIn}
-            >
+      <TouchableWithoutFeedback onPress={handleClosePress}>
+        <View style={styles.imageViewerOverlay}>
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            style={styles.imageViewerScroll}
+            contentContainerStyle={styles.imageViewerScrollContent}
+            onMomentumScrollEnd={(event) => {
+              const index = Math.round(event.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+              handleMomentumScrollEnd(index);
+            }}
+            scrollEventThrottle={16}
+          >
+            {photos.map((item) => (
+              <View key={item.id} style={styles.imageViewerPage}>
               <Image
                 source={{ uri: getImageUrl(item.url) }}
                 style={styles.imageViewerImage}
                 contentFit="contain"
               />
-            </Pressable>
-          ))}
-        </ScrollView>
-      </View>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </TouchableWithoutFeedback>
     </Modal>
   );
 });
