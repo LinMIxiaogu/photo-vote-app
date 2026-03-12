@@ -996,7 +996,6 @@ const styles = StyleSheet.create({
   deregisterText: {
     fontSize: 13,
     color: "#EF4444",
-    textDecorationLine: "underline",
   },
   modalOverlay: {
     flex: 1,

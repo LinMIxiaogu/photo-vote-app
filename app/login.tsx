@@ -9,6 +9,7 @@ import {
   Platform,
   ActivityIndicator,
   Linking,
+  Modal,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
@@ -39,8 +40,9 @@ export default function LoginScreen() {
   const [error, setError] = useState("");
   const [codeCooldown, setCodeCooldown] = useState(0);
   const [agreed, setAgreed] = useState(false);
+  const [showAgreementPrompt, setShowAgreementPrompt] = useState(false);
 
-  const handleSendCode = useCallback(async () => {
+  const performSendCode = useCallback(async () => {
     const raw = phone.trim();
     if (!raw) {
       setError("请输入手机号");
@@ -70,6 +72,22 @@ export default function LoginScreen() {
       setSendCodeLoading(false);
     }
   }, [phone]);
+
+  const handleSendCode = useCallback(async () => {
+    if (!agreed) {
+      setShowAgreementPrompt(true);
+      return;
+    }
+
+    await performSendCode();
+  }, [agreed, performSendCode]);
+
+  const handleAgreeAndSendCode = useCallback(async () => {
+    setAgreed(true);
+    setError("");
+    setShowAgreementPrompt(false);
+    await performSendCode();
+  }, [performSendCode]);
 
   const handleSubmit = async () => {
     const raw = phone.trim();
@@ -218,6 +236,50 @@ export default function LoginScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={showAgreementPrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAgreementPrompt(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.agreementModal}>
+            <Text style={styles.agreementModalTitle}>请先阅读并同意协议</Text>
+            <Text style={styles.agreementModalText}>
+              发送验证码前，需要先同意《用户协议》和《隐私政策》。
+            </Text>
+            <View style={styles.agreementModalActions}>
+              <Pressable style={styles.agreementModalAction} onPress={() => setShowAgreementPrompt(false)}>
+                {({ pressed }) => (
+                  <View
+                    style={[
+                      styles.agreementModalButton,
+                      styles.agreementModalButtonSecondary,
+                      pressed && styles.submitPressed,
+                    ]}
+                  >
+                    <Text style={styles.agreementModalButtonSecondaryText}>拒绝</Text>
+                  </View>
+                )}
+              </Pressable>
+              <Pressable style={styles.agreementModalAction} onPress={handleAgreeAndSendCode}>
+                {({ pressed }) => (
+                  <View
+                    style={[
+                      styles.agreementModalButton,
+                      styles.agreementModalButtonPrimary,
+                      pressed && styles.submitPressed,
+                    ]}
+                  >
+                    <Text style={styles.agreementModalButtonPrimaryText}>同意</Text>
+                  </View>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScreenContainer>
   );
 }
@@ -346,5 +408,67 @@ const styles = StyleSheet.create({
   agreementLink: {
     color: "#6366F1",
     fontWeight: "600",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(17,24,28,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  agreementModal: {
+    width: "100%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+  },
+  agreementModalTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#11181C",
+  },
+  agreementModalText: {
+    fontSize: 14,
+    lineHeight: 22,
+    color: "#687076",
+    marginTop: 10,
+  },
+  agreementModalActions: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 18,
+  },
+  agreementModalButton: {
+    minHeight: 46,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  agreementModalAction: {
+    flex: 1,
+  },
+  agreementModalButtonSecondary: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+  },
+  agreementModalButtonPrimary: {
+    backgroundColor: "#6366F1",
+    borderWidth: 1,
+    borderColor: "#6366F1",
+  },
+  agreementModalButtonSecondaryText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#11181C",
+  },
+  agreementModalButtonPrimaryText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
 });
