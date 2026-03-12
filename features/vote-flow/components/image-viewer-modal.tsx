@@ -1,4 +1,4 @@
-import { memo, RefObject } from "react";
+import { memo, RefObject, useCallback, useEffect, useRef } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Image } from "expo-image";
 
@@ -21,6 +21,20 @@ export const ImageViewerModal = memo(function ImageViewerModal({
   onClose,
   onMomentumScrollEnd,
 }: Props) {
+  const closeInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (visible) {
+      closeInFlightRef.current = false;
+    }
+  }, [visible]);
+
+  const handleClosePressIn = useCallback(() => {
+    if (closeInFlightRef.current) return;
+    closeInFlightRef.current = true;
+    onClose();
+  }, [onClose]);
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.imageViewerOverlay}>
@@ -38,7 +52,11 @@ export const ImageViewerModal = memo(function ImageViewerModal({
           scrollEventThrottle={16}
         >
           {photos.map((item) => (
-            <Pressable key={item.id} style={styles.imageViewerPage} onPress={onClose}>
+            <Pressable
+              key={item.id}
+              style={styles.imageViewerPage}
+              onPressIn={handleClosePressIn}
+            >
               <Image
                 source={{ uri: getImageUrl(item.url) }}
                 style={styles.imageViewerImage}

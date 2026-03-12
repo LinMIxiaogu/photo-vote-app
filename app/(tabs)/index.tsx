@@ -45,7 +45,7 @@ import { trpc } from "@/lib/trpc";
 
 const shareIcon = require("@/assets/images/share-icon-card.png");
 const SWIPE_GUIDE_SHOWN_KEY = "@swipe_guide_shown_v1";
-const IMAGE_VIEWER_TOUCH_BLOCK_MS = 500;
+const IMAGE_VIEWER_TOUCH_BLOCK_MS = Platform.OS === "ios" ? 800 : 500;
 
 export default function VoteFlowScreen() {
   const router = useRouter();
