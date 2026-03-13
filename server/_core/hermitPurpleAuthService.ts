@@ -55,6 +55,11 @@ function logHermitError(action: string, error: unknown) {
   console.error(`[HermitPurple] ${action} failed`, error);
 }
 
+/**
+ * 请求验证码：GET /api/fetchVerifyCode
+ * 参数：phone（必填）、smsType（必填）、appName（可选）。限频以接口方说明为准。
+ * 本项目通过 appName 传递「一选」。
+ */
 export async function sendSmsCode(
   phone: string,
   smsType: SmsType = "LOGIN_OR_REGISTER",
@@ -66,8 +71,9 @@ export async function sendSmsCode(
   try {
     const { data } = await client.get<ApiResponse<string>>("/api/fetchVerifyCode", {
       params: {
-        smsType,
         phone,
+        smsType,
+        appName: "一选",
       },
     });
 
