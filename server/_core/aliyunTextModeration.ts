@@ -67,7 +67,7 @@ function inferResult(labels?: string, reason?: string, descriptions?: string): M
 
 export async function moderateText(
   content: string,
-  service: string = "ugc_moderation_byllm_pro",
+  service: string = "comment_detection",
 ): Promise<TextModerationOutput> {
   if (!content || !content.trim()) {
     return { pass: true, result: "pass" };

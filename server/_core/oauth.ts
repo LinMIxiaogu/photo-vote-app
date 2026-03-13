@@ -54,7 +54,7 @@ async function syncUser(userInfo: {
   let nameAutoMessage: string | undefined;
 
   if (incomingName && incomingName !== existing?.name) {
-    const mod = await moderateText(incomingName, "ugc_moderation_byllm_pro");
+    const mod = await moderateText(incomingName, "nickname_detection");
     nameModerationStatus = mod.pass ? "approved" : "pending";
     nameAutoResult = mod.pass ? "pass" : (mod.result ?? "block");
     nameAutoMessage = mod.pass ? undefined : mod.message;
