@@ -862,11 +862,11 @@ export function registerAdminRoutes(app: Express): void {
 
       const textChecks: Array<{ pass: boolean; message?: string; result?: string }> = [];
       if (title?.trim()) {
-        const mod = await moderateText(title.trim(), "comment_detection");
+        const mod = await moderateText(title.trim(), "ugc_moderation_byllm_pro");
         textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
       }
       if (description?.trim()) {
-        const mod = await moderateText(description.trim(), "comment_detection");
+        const mod = await moderateText(description.trim(), "ugc_moderation_byllm_pro");
         textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
       }
       const textFail = textChecks.find((c) => !c.pass);

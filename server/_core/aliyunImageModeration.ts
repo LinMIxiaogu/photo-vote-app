@@ -5,7 +5,7 @@ import { RuntimeOptions } from "@alicloud/tea-util";
 import { randomUUID } from "node:crypto";
 
 const ENDPOINT = "green-cip.cn-shanghai.aliyuncs.com";
-const DEFAULT_SERVICE = "baselineCheck";
+const DEFAULT_SERVICE = "baselineCheckByVL";
 
 export interface ImageModerationOutput {
   pass: boolean;

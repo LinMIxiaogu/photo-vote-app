@@ -44,7 +44,7 @@ export const appRouter = router({
           };
         }
 
-        const textMod = await moderateText(name, "nickname_detection");
+        const textMod = await moderateText(name, "ugc_moderation_byllm_pro");
         const status = textMod.pass ? "approved" : "pending";
 
         await db.updateUserName(ctx.user.id, name);
@@ -124,11 +124,11 @@ export const appRouter = router({
 
           const textChecks: Array<{ pass: boolean; message?: string; result?: string }> = [];
           if (input.title?.trim()) {
-            const mod = await moderateText(input.title.trim(), "comment_detection");
+            const mod = await moderateText(input.title.trim(), "ugc_moderation_byllm_pro");
             textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
           }
           if (input.description?.trim()) {
-            const mod = await moderateText(input.description.trim(), "comment_detection");
+            const mod = await moderateText(input.description.trim(), "ugc_moderation_byllm_pro");
             textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
           }
           const textFail = textChecks.find((c) => !c.pass);
@@ -228,11 +228,11 @@ export const appRouter = router({
         }
         const textChecks: Array<{ pass: boolean; message?: string; result?: string }> = [];
         if (typeof input.title === "string" && input.title.trim()) {
-          const mod = await moderateText(input.title.trim(), "comment_detection");
+          const mod = await moderateText(input.title.trim(), "ugc_moderation_byllm_pro");
           textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
         }
         if (typeof input.description === "string" && input.description.trim()) {
-          const mod = await moderateText(input.description.trim(), "comment_detection");
+          const mod = await moderateText(input.description.trim(), "ugc_moderation_byllm_pro");
           textChecks.push({ pass: mod.pass, message: mod.message, result: mod.result });
         }
         const textFail = textChecks.find((c) => !c.pass);
@@ -482,7 +482,7 @@ export const appRouter = router({
         let textPass = true;
         let textFail: { message?: string; result?: string } | null = null;
         if (input.content.trim()) {
-          const mod = await moderateText(input.content.trim(), "comment_detection");
+          const mod = await moderateText(input.content.trim(), "ugc_moderation_byllm_pro");
           textPass = mod.pass;
           if (!mod.pass) textFail = { message: mod.message, result: mod.result };
         }
