@@ -10,6 +10,7 @@ import {
   Alert,
   Modal,
   TextInput,
+  Linking,
   useWindowDimensions,
 } from "react-native";
 import Animated, {
@@ -369,6 +370,15 @@ export default function MeScreen() {
     setShowFeedback(true);
   };
 
+  const handleIcpPress = async () => {
+    haptic();
+    try {
+      await Linking.openURL("https://beian.miit.gov.cn/");
+    } catch {
+      Alert.alert("打开失败", "暂时无法打开工信部备案网站，请稍后重试");
+    }
+  };
+
   const handleNamePress = () => {
     if (!user) return;
     haptic();
@@ -538,6 +548,13 @@ export default function MeScreen() {
               )}
             </Pressable>
           </View>
+          <Pressable onPress={handleIcpPress} style={styles.icpFooter}>
+            {({ pressed }) => (
+              <Text style={[styles.icpFooterText, { color: colors.muted }, pressed && { opacity: 0.5 }]}>
+                京ICP备2025157830号-5A
+              </Text>
+            )}
+          </Pressable>
         </View>
       </ScreenContainer>
     );
@@ -682,6 +699,7 @@ export default function MeScreen() {
               </View>
             )}
           </Pressable>
+
         </View>
 
         <Pressable onPress={handleLogout} disabled={loggingOut}>
@@ -711,6 +729,14 @@ export default function MeScreen() {
           {({ pressed }) => (
             <Text style={[styles.deregisterText, pressed && { opacity: 0.5 }, deregistering && { opacity: 0.4 }]}>
               {deregistering ? "注销中…" : "注销账号"}
+            </Text>
+          )}
+        </Pressable>
+
+        <Pressable onPress={handleIcpPress} style={styles.icpFooter}>
+          {({ pressed }) => (
+            <Text style={[styles.icpFooterText, { color: colors.muted }, pressed && { opacity: 0.5 }]}>
+              京ICP备2025157830号-5A
             </Text>
           )}
         </Pressable>
@@ -794,6 +820,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 32,
+    gap: 16,
   },
   guestCard: {
     width: "100%",
@@ -819,6 +846,15 @@ const styles = StyleSheet.create({
   guestSubtitle: {
     fontSize: 14,
     marginBottom: 20,
+  },
+  icpFooter: {
+    alignItems: "center",
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  icpFooterText: {
+    fontSize: 11,
+    lineHeight: 16,
   },
   primaryButton: {
     paddingVertical: 12,
