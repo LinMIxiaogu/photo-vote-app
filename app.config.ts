@@ -95,8 +95,10 @@ const config: ExpoConfig = {
     [
       "expo-media-library",
       {
-        photosPermission: "Allow 一选 to access your photos.",
-        savePhotosPermission: "Allow 一选 to save photos to your library.",
+        photosPermission:
+          "一选需要访问您的照片库，用于：选择照片上传参与投票活动（您主动选取的照片将上传至服务器供其他用户投票）、从相册选取图片设置个人头像、以及提交反馈时附加截图。应用仅读取您明确选择的照片，不会自动扫描或上传您的其他照片。",
+        savePhotosPermission:
+          "一选需要将图片保存到您的相册，用于保存您的投票结果海报和分享卡片，以便您随时查看或分享至其他社交媒体平台。仅在您主动点击"保存"或"分享"时才会保存图片。",
         isAccessMediaLocationEnabled: false,
       },
     ],
